@@ -58,7 +58,7 @@ class DataAcquisition:
 
     def writeData(self, data: list):
 
-        fullFilename = self.operatorInitials + "_" + self.getSystemTime() + ".txt"
+        fullFilename = self.operatorInitials.upper() + "_" + self.getSystemTime() # no file extension name
         dataFile = open(fullFilename, "w")
 
         # Data formatting and writes to file

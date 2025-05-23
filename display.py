@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from DataAcquisition import DataAcquisition
 
 
-class DataGUI:
+class Display:
     # GUI refresh rate (ms)
     UPDATE_MS = 100  # 10 Hz
 
@@ -35,9 +35,6 @@ class DataGUI:
         initialsEntry = ttk.Entry(top, width=5, textvariable=self.initialsVar)
         initialsEntry.grid(row=0, column=1, sticky="w", padx=(2, 15))
         initialsEntry.focus_set()
-
-        self.startStopBtn = ttk.Button(top, text="Stop Recording", command=self.toggleRecording)
-        self.startStopBtn.grid(row=0, column=2, sticky="w")
 
         ttk.Separator(root, orient="horizontal").pack(fill=tk.X, pady=4)
 
@@ -75,7 +72,6 @@ class DataGUI:
     def toggleRecording(self):
         # toggles acquisition on/off
         self.recording = not self.recording
-        self.startStopBtn.config(text="Start Recording" if not self.recording else "Stop Recording")
 
         # write immediately when stopping
         if not self.recording:
@@ -132,3 +128,11 @@ class DataGUI:
             self.writeDataToFile()
 
         self.root.destroy()
+
+def main():
+    root = tk.Tk()
+    Display(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
