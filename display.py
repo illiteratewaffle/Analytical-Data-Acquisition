@@ -1,107 +1,134 @@
 import time
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 
 import matplotlib
-matplotlib.use("TkAgg") # Embed matplotlib in Tkinter
+matplotlib.use("TkAgg") # use Tk backend for embedding
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 
 from DataAcquisition import DataAcquisition
 
 
-class Display:
+class DataGUI:
+    # GUI refresh rate (ms)
+    UPDATE_MS = 100  # 10 Hz
 
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root):
         self.root = root
         self.root.title("Real‑Time Signal Monitor")
 
+        # Data acquisition object
         self.daq = DataAcquisition()
-        self.daq.startTime = time.perf_counter() # reset time start
 
-        # Figure/Canvas
+        # acquisition state
+        self.recording = True
+        self.startTime = time.perf_counter()
+
+        # gui construction
+        # operator initials, start / stop button
+        top = ttk.Frame(root, padding=(10, 5))
+        top.pack(side=tk.TOP, fill=tk.X)
+
+        ttk.Label(top, text="Operator Initials:").grid(row=0, column=0, sticky="w")
+        self.initialsVar = tk.StringVar()
+        initialsEntry = ttk.Entry(top, width=5, textvariable=self.initialsVar)
+        initialsEntry.grid(row=0, column=1, sticky="w", padx=(2, 15))
+        initialsEntry.focus_set()
+
+        self.startStopBtn = ttk.Button(top, text="Stop Recording", command=self.toggleRecording)
+        self.startStopBtn.grid(row=0, column=2, sticky="w")
+
+        ttk.Separator(root, orient="horizontal").pack(fill=tk.X, pady=4)
+
+        # elapsed‑time / signal read‑outs
+        info = ttk.Frame(root, padding=(10, 0))
+        info.pack(side=tk.TOP, fill=tk.X)
+
+        ttk.Label(info, text="Time Elapsed (s):").grid(row=0, column=0, sticky="w")
+        self.timeVar = tk.StringVar(value="0.0000")
+        ttk.Label(info, textvariable=self.timeVar).grid(row=0, column=1, sticky="w", padx=(4, 20))
+
+        ttk.Label(info, text="Current Signal (V):").grid(row=0, column=2, sticky="w")
+        self.signalVar = tk.StringVar(value="0.0000")
+        ttk.Label(info, textvariable=self.signalVar).grid(row=0, column=3, sticky="w")
+
+        # matplotlib figure embedded in Tk
         self.fig, self.ax = plt.subplots(figsize=(6, 4))
         self.ax.set_xlabel("Time (s)")
         self.ax.set_ylabel("Signal (V)")
-        self.line, = self.ax.plot([], [], lw=1.5)
+        self.line, = self.ax.plot([], [], lw=1.3)
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=root)
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        # Labels
-        info = ttk.Frame(root)
-        info.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
-
-        ttk.Label(info, text="Time Elapsed (s):").grid(row=0, column=0, sticky="w")
-        self.time_var = tk.StringVar(value="0.0000")
-        ttk.Label(info, textvariable=self.time_var).grid(row=0, column=1, sticky="w", padx=(4, 20))
-
-        ttk.Label(info, text="Current Signal (V):").grid(row=0, column=2, sticky="w")
-        self.signal_var = tk.StringVar(value="0.0000")
-        ttk.Label(info, textvariable=self.signal_var).grid(row=0, column=3, sticky="w")
-
         # data containers
-        self.xdata: list[float] = [] # time stamps
-        self.ydata: list[float] = [] # signal values
+        self.xData = []
+        self.yData = []
 
-        # Update interval in milliseconds
-        self.update_ms = 100 # 10 Hz refresh
+        # schedule first GUI update
+        self.jobId = self.root.after(self.UPDATE_MS, self.updateLoop)
 
-        # Begin periodic update loop
-        self._job = self.root.after(self.update_ms, self._update_loop)
+        # close handler
+        self.root.protocol("WM_DELETE_WINDOW", self.closeWindow)
 
-        # Proper cleanup on close
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
+    def toggleRecording(self):
+        # toggles acquisition on/off
+        self.recording = not self.recording
+        self.startStopBtn.config(text="Start Recording" if not self.recording else "Stop Recording")
 
-    def _update_loop(self):
-        try:
-            signal = self.daq.getSignalData()
-        except Exception as exc:
-            # Hardware call failed ‑ fall back to None so UI keeps running
-            print("Error reading signal:", exc)
-            signal = None
+        # write immediately when stopping
+        if not self.recording:
+            self.writeDataToFile()
 
-        if signal is not None:
-            # Compute elapsed time
-            t = time.perf_counter() - self.daq.startTime
-
-            # Store data
-            self.xdata.append(t)
-            self.ydata.append(signal)
-
-            # Update read‑outs
-            self.time_var.set(f"{t:.4f}")
-            self.signal_var.set(f"{signal:.4f}")
-
-            # Update plot line
-            self.line.set_data(self.xdata, self.ydata)
-            self.ax.relim() # Recompute axes limits
-            self.ax.autoscale_view() # Autoscale to new data range
-            self.canvas.draw_idle()
-
-        # Schedule the next update
-        self._job = self.root.after(self.update_ms, self._update_loop)
-
-    def close(self):
-        if self._job is not None:
-            self.root.after_cancel(self._job)
-            self._job = None
-
-        # Persist the collected data using the DAQ class's writer
-        if self.xdata and self.ydata:
-            self.daq.data = list(zip(self.xdata, self.ydata))
+    def updateLoop(self):
+        if self.recording:
             try:
-                self.daq.writeData(self.daq.data)
+                signal = self.daq.getSignalData()
             except Exception as exc:
-                print("Could not write data file:", exc)
+                print("Error reading signal:", exc)
+                signal = None
+
+            if signal is not None:
+                t = time.perf_counter() - self.startTime
+                self.xData.append(t)
+                self.yData.append(signal)
+
+                # update read‑outs
+                self.timeVar.set(f"{t:.4f}")
+                self.signalVar.set(f"{signal:.4f}")
+
+                # update plot
+                self.line.set_data(self.xData, self.yData)
+                self.ax.relim()
+                self.ax.autoscale_view()
+                self.canvas.draw_idle()
+
+        # reschedule next refresh
+        self.jobId = self.root.after(self.UPDATE_MS, self.updateLoop)
+
+    def writeDataToFile(self):
+        if not self.xData:
+            return # nothing to save
+
+        initials = self.initialsVar.get().strip().upper() or "NULL"
+        self.daq.operatorInitials = initials
+
+        self.daq.data = list(zip(self.xData, self.yData))
+        try:
+            self.daq.writeData(self.daq.data)
+            print("Data written to disk.")
+        except Exception as exc:
+            messagebox.showerror("Write Error", f"Could not write data file:\n{exc}")
+
+    def closeWindow(self):
+        # cancel scheduled callback
+        if self.jobId is not None:
+            self.root.after_cancel(self.jobId)
+            self.jobId = None
+
+        # always attempt to save any collected data
+        if self.xData:
+            self.writeDataToFile()
 
         self.root.destroy()
-
-def main():
-    root = tk.Tk()
-    Display(root) # create and start GUI
-    root.mainloop()
-
-
-if __name__ == "__main__":
-    main()
