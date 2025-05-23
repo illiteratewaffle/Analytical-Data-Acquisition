@@ -1,5 +1,11 @@
-from DataAcquisition import DataAcquisition
+from display import main as run_gui
 
-daq = DataAcquisition()
-daq.operatorInitials = "HH"
-daq.mainLoop()
+
+if __name__ == "__main__":
+    # Launch the Tkinter interface
+    run_gui()
+
+    # from DataAcquisition import DataAcquisition
+    # daq = DataAcquisition()
+    # daq.operatorInitials = "HH"
+    # daq.mainLoop()
