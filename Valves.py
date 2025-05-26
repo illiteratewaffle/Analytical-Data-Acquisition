@@ -20,10 +20,10 @@ class Valves:
             ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, bit, 1)
         ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, 1, 0)
 
-def testValves():
-    testValve = Valves()
-    testValve.set_valve_position_a()
-    sleep(3)
-    testValve.set_valve_position_b()
-
-testValves()
+# def testValves():
+#     testValve = Valves()
+#     testValve.set_valve_position_a()
+#     sleep(3)
+#     testValve.set_valve_position_b()
+#
+# testValves()

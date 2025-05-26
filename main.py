@@ -1,4 +1,4 @@
-from display import main as run_gui
+from Display import main as run_gui
 
 
 if __name__ == "__main__":

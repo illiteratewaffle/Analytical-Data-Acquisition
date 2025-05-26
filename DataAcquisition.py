@@ -25,7 +25,7 @@ class DataAcquisition:
         
         # todo: make it run for x amount of time
         #while (1 == 1):
-        for i in range(3000):
+        for i in range(1):
             signalValue = self.getSignalData()
             timeValue = self.getTimeData(self.startTime)
             self.recordData(timeValue, signalValue)
