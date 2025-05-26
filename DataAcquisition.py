@@ -10,6 +10,7 @@ class DataAcquisition:
     def __init__(self):
         # board number: found in InstaCal
         self.board_num = 0
+
         # channel/range: see ports in MCCDAQ manual
         self.channel = 0
         self.ai_range = ULRange.BIP20VOLTS  # "ai" = analog input
