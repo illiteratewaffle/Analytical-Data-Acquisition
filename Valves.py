@@ -20,6 +20,7 @@ class Valves:
             ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, bit, 1)
         ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, 1, 0)
 
+# Enable this to test valves
 # def testValves():
 #     testValve = Valves()
 #     testValve.set_valve_position_a()
