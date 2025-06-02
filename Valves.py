@@ -9,13 +9,13 @@ class Valves:
         ul.d_config_port(self.board_num, DigitalPortType.FIRSTPORTA, 1)
 
     # Function to switch to Position A
-    def set_valve_position_a(self):
+    def set_valve_position_a(self) -> None:
         for bit in range(8):
             ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, bit, 1)
         ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, 0, 0)
 
     # Function to switch to Position B
-    def set_valve_position_b(self):
+    def set_valve_position_b(self) -> None:
         for bit in range(8):
             ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, bit, 1)
         ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, 1, 0)

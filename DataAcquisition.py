@@ -20,7 +20,7 @@ class DataAcquisition:
 
         self.operatorInitials = "NULL"
 
-    def mainLoop(self):
+    def mainLoop(self) -> None:
         self.startTime = time.perf_counter()
         
         # todo: make it run for x amount of time
@@ -54,10 +54,10 @@ class DataAcquisition:
 
         return timeElapsed
 
-    def recordData(self, time: float, signal: float):
+    def recordData(self, time: float, signal: float) -> None:
         self.data.append([time, signal])
 
-    def writeData(self, data: list):
+    def writeData(self, data: list) -> None:
 
         fullFilename = self.operatorInitials.upper() + "_" + self.getSystemTime() # no file extension name
         dataFile = open(fullFilename, "w")

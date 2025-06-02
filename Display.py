@@ -93,7 +93,7 @@ class Display:
         # Close handler
         self.root.protocol("WM_DELETE_WINDOW", self.closeWindow)
 
-    def toggleRecording(self):
+    def toggleRecording(self) -> None:
         # toggles acquisition on/off
         self.recording = not self.recording
 
@@ -101,7 +101,7 @@ class Display:
         if not self.recording:
             self.writeDataToFile()
 
-    def toggleValveA(self):
+    def toggleValveA(self) -> None:
         self.valveA_on = not self.valveA_on
         if self.valveA_on:
             self.valves.set_valve_position_a()
@@ -111,7 +111,7 @@ class Display:
         else:
             self.buttonA.config(bg="#D3D3D3")
 
-    def toggleValveB(self):
+    def toggleValveB(self) -> None:
         self.valveB_on = not self.valveB_on
         if self.valveB_on:
             self.valves.set_valve_position_b()
@@ -121,7 +121,7 @@ class Display:
         else:
             self.buttonB.config(bg="#D3D3D3")
 
-    def updateLoop(self):
+    def updateLoop(self) -> None:
         if self.recording:
             elapsed = time.perf_counter() - self.startTime
 
@@ -154,7 +154,7 @@ class Display:
         # reschedule next refresh
         self.jobId = self.root.after(self.UPDATE_MS, self.updateLoop)
 
-    def writeDataToFile(self):
+    def writeDataToFile(self) -> None:
         if not self.xData:
             return # nothing to save
 
@@ -168,7 +168,7 @@ class Display:
         except Exception as exc:
             messagebox.showerror("Write Error", f"Could not write data file:\n{exc}")
 
-    def closeWindow(self):
+    def closeWindow(self) -> None:
         # cancel scheduled callback
         if self.jobId is not None:
             self.root.after_cancel(self.jobId)
