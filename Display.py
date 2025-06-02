@@ -26,7 +26,7 @@ class Display:
         self.startTime = time.perf_counter()
 
         # Duration of recording data
-        self.maxDuration = 10  # seconds
+        self.maxDuration = 30  # seconds
 
         # Top panel: Operator initials
         top = ttk.Frame(root, padding=(10, 5))
