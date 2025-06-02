@@ -26,5 +26,4 @@ class Valves:
 #     testValve.set_valve_position_a()
 #     sleep(3)
 #     testValve.set_valve_position_b()
-#
 # testValves()
