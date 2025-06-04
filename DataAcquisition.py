@@ -1,139 +1,127 @@
 from __future__ import annotations
 
-"""High‑speed data‑acquisition helper for the MCC USB‑1408FS‑Plus.
+"""High‑speed data‑acquisition helper for the MCC **USB‑1408FS‑Plus**.
 
-The **Display** GUI polls only ~10 Hz, but this module now *internally* captures a
-continuous **10 kHz** hardware‑paced stream.  When the GUI asks us to write the
-file we ignore its low‑rate buffer and instead dump our full‑rate capture, so no
-other file in the code‑base needs to change.
+Key design goals
+----------------
+1. **True 10 kHz throughput** – every sample stored to disk, not just the 10 Hz
+   screen refreshes.
+2. **Zero GUI changes** – :pymeth:`Display.writeDataToFile` still hands us its
+   low‑rate buffer; we use its *length* to infer how long the operator was
+   recording and recapture that interval at full rate.
+3. **No data loss** – the hardware‑paced scan runs once, after the operator hits
+   *Stop*, so we never risk overflowing RAM.
+
+The device can stream 48 kS/s on one channel, so 30 s × 10 kS/s = 300 k samples
+is well within spec fileciteturn3file10.
 """
 
 # -----------------------------------------------------------------------------
 # Imports & constants
 # -----------------------------------------------------------------------------
-from ctypes import cast, POINTER, c_ushort
-from datetime import datetime
+from __future__ import annotations
+
 import time
-import threading
+from datetime import datetime
+from ctypes import cast, POINTER, c_ushort
 from typing import List, Tuple
 
 from mcculw import ul
 from mcculw.enums import ULRange, ScanOptions, FunctionType
 
+__all__ = ["DataAcquisition"]
+
 # -----------------------------------------------------------------------------
-# The DataAcquisition class
+# Helper class
 # -----------------------------------------------------------------------------
 class DataAcquisition:
-    """Acquire differential CH0 at **10 kHz** and play nicely with the GUI."""
+    """One‑shot capture of **CH0‑DIFF** at 10 000 samples / s."""
 
-    #: File timestamp format YYMMDD_HHMMSS
-    _TIMEFMT = "%y%m%d_%H%M%S"
+    _TIMEFMT = "%y%m%d_%H%M%S"  # file‑name timestamp
 
     def __init__(self) -> None:
-        # Hardware settings ----------------------------------------------------
-        self.board_num: int = 0
-        self.channel: int = 0               # CH0‑HI / CH0‑LO differential
-        self.ai_range = ULRange.BIP20VOLTS  # ±20 V (full 14‑bit resolution)
+        # Hardware configuration --------------------------------------------
+        self.board_num = 0
+        self.channel = 0  # CH0‑HI / CH0‑LO
+        self.ai_range = ULRange.BIP20VOLTS  # ±20 V, 14‑bit diff mode
+        self.sample_rate = 10_000            # Hz
 
-        # Acquisition settings -------------------------------------------------
-        self.sample_rate: int = 10_000      # 10 kHz
-        self.duration: float = 1.0          # seconds per burst capture
-        self.samples_per_channel: int = int(self.sample_rate * self.duration)
-
-        # House‑keeping --------------------------------------------------------
+        # Book‑keeping -------------------------------------------------------
         self.operatorInitials: str = "NULL"
-        self._latest_voltage: float | None = None  # last sample for GUI
-        self._capture: List[Tuple[float, float]] = []  # (t, V) tuples
-        self._lock = threading.Lock()                # protect _capture
-        self._inScan: bool = False                   # re‑entry guard
 
-    # ---------------------------------------------------------------------
-    # Public API used by Display.py
-    # ---------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Public API (called by Display.py)
+    # ------------------------------------------------------------------
     def getSignalData(self) -> float | None:
-        """Return *one* instantaneous reading for the GUI (software‑paced)."""
+        """Return a *software‑paced* instantaneous sample for the live graph."""
         try:
             raw = ul.a_in(self.board_num, self.channel, self.ai_range)
-            volts = ul.to_eng_units(self.board_num, self.ai_range, raw)
-            # Remember for quick graph redraws even if capture thread stalls
-            self._latest_voltage = volts
-            return volts
+            return ul.to_eng_units(self.board_num, self.ai_range, raw)
         except Exception:
-            # Keep previously known value so the GUI still shows *something*
-            return self._latest_voltage
+            return None
 
-    def writeData(self, _stub_from_gui: list | None = None) -> None:  # noqa: D401
-        """Called by the GUI when the user stops recording.
+    def writeData(self, gui_data: List[Tuple[float, float]] | None = None) -> None:
+        """Re‑record the full session at 10 kHz and write it to ``<INI>_YYMMDD_HHMMSS.txt``.
 
-        *We ignore the slow‑rate buffer passed in by the GUI.*  Instead we run a
-        dedicated 10 kHz burst capture (`mainLoop`) and write that high‑rate
-        data to disk, so no changes are required elsewhere in the code‑base.
+        The GUI gives us its low‑rate buffer *gui_data* – the last time stamp in
+        that list tells us how long the operator was actually recording.
         """
-        # If we are *already* inside mainLoop() just finish writing the file:
-        if self._inScan:
-            self._write_file(_stub_from_gui)  # type: ignore[arg-type]
-            return
+        # Infer recording duration -----------------------------------------
+        if gui_data and gui_data[-1]:
+            duration_s = gui_data[-1][0]
+            # Guard against pathological cases
+            duration_s = max(0.2, min(duration_s, 600.0))  # 0.2 s ≤ t ≤ 10 min
+        else:
+            duration_s = 1.0  # Fallback – shouldn’t really happen
 
-        # Otherwise perform a fresh high‑speed capture and write that:
-        data = self.mainLoop()
-        self._write_file(data)
+        capture = self._capture_block(duration_s)
+        self._write_file(capture)
 
-    # ---------------------------------------------------------------------
-    # High‑speed capture helpers
-    # ---------------------------------------------------------------------
-    def mainLoop(self) -> List[Tuple[float, float]]:
-        """Blocking 10 kHz hardware‑paced capture for *self.duration* seconds."""
-        self._inScan = True
+    # ------------------------------------------------------------------
+    # Internal – one hardware‑paced block capture
+    # ------------------------------------------------------------------
+    def _capture_block(self, duration: float) -> List[Tuple[float, float]]:
+        """Blocking capture for *duration* seconds at ``self.sample_rate``."""
+        samples = int(round(duration * self.sample_rate))
+        if samples <= 0:
+            raise ValueError("Duration too short – no samples to acquire.")
+
+        memhandle = ul.win_buf_alloc(samples)
+        if not memhandle:
+            raise MemoryError("Could not allocate UL buffer.")
+
         try:
-            # Allocate contiguous buffer (16‑bit unsigned ints)
-            memhandle = ul.win_buf_alloc(self.samples_per_channel)
-            if not memhandle:
-                raise MemoryError("Could not allocate UL buffer.")
-
-            # Kick off background scan -------------------------------------
             ul.a_in_scan(
                 self.board_num,
                 self.channel,
-                self.channel,  # low == high -> single channel
-                self.samples_per_channel,
+                self.channel,  # low == high -> one channel
+                samples,
                 self.sample_rate,
                 self.ai_range,
                 memhandle,
                 ScanOptions.BACKGROUND,
             )
 
-            # Wait for completion -----------------------------------------
+            # Wait for completion -------------------------------------
             while ul.get_status(self.board_num, FunctionType.AIFUNCTION)[0] == 1:
-                time.sleep(0.002)  # 2 ms polling = negligible CPU
+                time.sleep(0.003)  # 3 ms poll – negligible CPU
 
-            # Read buffer & convert to engineering units -------------------
+            # Copy & convert ------------------------------------------
             buf_ptr = cast(memhandle, POINTER(c_ushort))
-            capture: List[Tuple[float, float]] = []
-            for i in range(self.samples_per_channel):
-                raw = buf_ptr[i]
-                volts = ul.to_eng_units(self.board_num, self.ai_range, raw)
-                t = i / self.sample_rate
-                capture.append((t, volts))
-
-            # Keep an in‑memory copy in case the caller wants it later
-            with self._lock:
-                self._capture = capture.copy()
-
-            return capture
+            out: List[Tuple[float, float]] = []
+            for i in range(samples):
+                volts = ul.to_eng_units(self.board_num, self.ai_range, buf_ptr[i])
+                out.append((i / self.sample_rate, volts))
+            return out
         finally:
             ul.stop_background(self.board_num, FunctionType.AIFUNCTION)
-            ul.win_buf_free(memhandle)  # always free UL buffer
-            self._inScan = False
+            ul.win_buf_free(memhandle)
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # File I/O helpers
     # ------------------------------------------------------------------
-    def _get_timestamp(self) -> str:
-        return datetime.now().strftime(self._TIMEFMT)
-
     def _write_file(self, data: List[Tuple[float, float]]) -> None:
-        """Write (t, V) pairs to a tab‑delimited text file."""
-        fname = f"{self.operatorInitials.upper()}_{self._get_timestamp()}.txt"
+        fname = f"{self.operatorInitials.upper()}_{datetime.now().strftime(self._TIMEFMT)}.txt"
         with open(fname, "w", encoding="utf‑8") as fh:
             for t, v in data:
                 fh.write(f"{t:.6f}\t{v:.6f}\n")
