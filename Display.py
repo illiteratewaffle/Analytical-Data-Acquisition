@@ -123,38 +123,41 @@ class Display:
 
     def updateLoop(self) -> None:
         if self.recording:
-            elapsed = time.perf_counter() - self.startTime
+            if not self.daq.is_logging():
+                elapsed = time.perf_counter() - self.startTime
 
-            if elapsed >= self.maxDuration:
-                self.recording = False
-                self.writeDataToFile()
-                return  # stop scheduling further updates
+                if elapsed >= self.maxDuration:
+                    self.recording = False
+                    self.writeDataToFile()
+                    return  # stop scheduling further updates
 
-            try:
-                signal = self.daq.getSignalData()
-            except Exception as exc:
-                print("Error reading signal:", exc)
-                signal = None
+                try:
+                    signal = self.daq.getSignalData()
+                except Exception as exc:
+                    print("Error reading signal:", exc)
+                    signal = None
 
-            if signal is not None:
-                remaining = max(0.0, self.maxDuration - elapsed)  # calculate time remaining
+                if signal is not None:
+                    remaining = max(0.0, self.maxDuration - elapsed)  # calculate time remaining
 
-                self.xData.append(elapsed)
-                self.yData.append(signal)
+                    self.xData.append(elapsed)
+                    self.yData.append(signal)
 
-                self.timeVar.set(f"{elapsed:.4f}")
-                self.remainingVar.set(f"{remaining:.4f}")  # update time remaining display
-                self.signalVar.set(f"{signal:.4f}")
+                    self.timeVar.set(f"{elapsed:.4f}")
+                    self.remainingVar.set(f"{remaining:.4f}")  # update time remaining display
+                    self.signalVar.set(f"{signal:.4f}")
 
-                self.line.set_data(self.xData, self.yData)
-                self.ax.relim()
-                self.ax.autoscale_view()
-                self.canvas.draw_idle()
+                    self.line.set_data(self.xData, self.yData)
+                    self.ax.relim()
+                    self.ax.autoscale_view()
+                    self.canvas.draw_idle()
 
-        # reschedule next refresh
-        self.jobId = self.root.after(self.UPDATE_MS, self.updateLoop)
+            # reschedule next refresh
+            self.jobId = self.root.after(self.UPDATE_MS, self.updateLoop)
 
     def writeDataToFile(self) -> None:
+        self.daq.stop_logging()
+
         if not self.xData:
             return # nothing to save
 

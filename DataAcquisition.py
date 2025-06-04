@@ -1,144 +1,119 @@
-from __future__ import annotations
-
-"""High‑rate DAQ helper — **records at 10 kHz *while* the GUI runs**.
-
-This replaces the original one‑shot, 1‑s scan with a **continuous hardware‑paced
-stream**.
-
-Behaviour summary
-=================
-* **Automatic scan start** — a 10 kHz scan begins the moment the object is
-  constructed (Display instantiates us before it starts its timer).
-* **Fast live value** — :py:meth:`getSignalData` still returns a single
-  software‑paced reading for the on‑screen read‑out (no GUI changes).
-* **File save** — when Display calls :py:meth:`writeData(...)` we *stop* the
-  scan, pull all acquired samples out of the ring buffer (properly handling any
-  wrap‑around) and write them to disk at full resolution.  The low‑rate list
-  that Display passes in is accepted but ignored.
-
-Implementation notes
---------------------
-* We allocate a **circular buffer** sized for 10 minutes at 10 kHz ≈ 6 000 000
-  samples (12 MiB).  Plenty of margin above the GUI’s default 30 s recording.
-* The MCC **USB‑1408FS‑Plus** delivers blocks of 32 samples over USB; the
-  Measurement Computing driver (``mcculw``) updates ``cur_index`` to point to
-  the *most‑recent* element in the buffer.
-* Timestamps in the output file are referenced to the *first* sample kept —
-  they therefore span 0 → <elapsed runtime> and align with the user’s
-  expectation that time 0 ≈ start of recording.
-"""
-
-# ---------------------------------------------------------------------------
-# Imports & constants
-# ---------------------------------------------------------------------------
-from ctypes import cast, POINTER, c_ushort
-from datetime import datetime
-from typing import List, Tuple, Any
-
 from mcculw import ul
-from mcculw.enums import ULRange, ScanOptions, FunctionType
+from mcculw.enums import ULRange
+from mcculw.ul import ULError
+from mcculw.device_info import DaqDeviceInfo
 
 import time
-
-__all__ = ["DataAcquisition"]
-
-_SAMPLE_RATE = 10_000  # Hz – one‑channel limit is 48 kS/s fileciteturn7file7L23-L37
-_BUFFER_SEC = 600      # 10 minutes safety margin → 6e6 samples ≈ 12 MiB
-_TIMEFMT = "%y%m%d_%H%M%S"  # file‑name timestamp
-
+import threading
+from datetime import datetime
 
 class DataAcquisition:
-    """Continuously stream CH0‑DIFF at 10 kHz into a ring buffer."""
 
-    # ------------------------------------------------------------------
-    # Construction – allocate buffer & start scan
-    # ------------------------------------------------------------------
-    def __init__(self) -> None:
+    SAMPLING_RATE_HZ = 10000 # 10 kHz target
+
+    def __init__(self):
+        # board number: found in InstaCal
         self.board_num = 0
+
+        # channel/range: see ports in MCCDAQ manual
         self.channel = 0
-        self.ai_range = ULRange.BIP20VOLTS
-        self.operatorInitials: str = "NULL"
+        self.ai_range = ULRange.BIP20VOLTS  # "ai" = analog input
 
-        self._max_samples = int(_BUFFER_SEC * _SAMPLE_RATE)
-        self._memhandle = ul.win_buf_alloc(self._max_samples)
-        if not self._memhandle:
-            raise MemoryError("mcculw: unable to allocate DAQ buffer")
+        # sampling rate config
+        self._logging      = False
+        self._log_thread   = None
+        self._log_lock     = threading.Lock()
 
-        # Kick off hardware‑paced *continuous* scan
-        ul.a_in_scan(
-            self.board_num,
-            self.channel,
-            self.channel,                       # one channel only
-            self._max_samples,                  # buffer size – ignored in CONTINUOUS mode but required
-            _SAMPLE_RATE,
-            self.ai_range,
-            self._memhandle,
-            ScanOptions.BACKGROUND | ScanOptions.CONTINUOUS,
-            )
-        # Give driver time to DMA the first block (32 samples)
-        time.sleep(0.005)
+        self.data = []
+        self.startTime = time.perf_counter()
 
-    # ------------------------------------------------------------------
-    # GUI live‑value helper
-    # ------------------------------------------------------------------
-    def getSignalData(self) -> float | None:
-        """Return an instantaneous software‑paced sample for the live read‑out."""
+        self.operatorInitials = "NULL"
+
+    def mainLoop(self) -> None:
+        self.startTime = time.perf_counter()
+
+        # todo: make it run for x amount of time
+        #while (1 == 1):
+        for i in range(1):
+            signalValue = self.getSignalData()
+            timeValue = self.getTimeData(self.startTime)
+            self.recordData(timeValue, signalValue)
+
+        self.writeData(self.data)
+
+
+    def getSignalData(self) -> (float | None):
         try:
-            raw = ul.a_in(self.board_num, self.channel, self.ai_range)
-            return ul.to_eng_units(self.board_num, self.ai_range, raw)
-        except Exception:
+            # GETS SIGNAL VALUE (in voltage)
+            # Get a value from the device
+            value = ul.a_in(self.board_num, self.channel, self.ai_range)
+            # Convert the raw value to normal units
+            units_value = ul.to_eng_units(self.board_num, self.ai_range, value)
+
+            return units_value
+
+        except ULError as e:  # Display the error (if needed)
+            print("A UL error occurred. Code: " + str(e.errorcode) + " Message: " + e.message)
+
             return None
 
-    # ------------------------------------------------------------------
-    # File‑write entry‑point (Display passes in its low‑rate list – ignored)
-    # ------------------------------------------------------------------
-    def writeData(self, *_ignored: Any) -> None:  # noqa: D401 – keep Display signature
-        """Stop acquisition, dump full‑rate data to ``<INITIALS>_YYMMDD_HHMMSS.txt``."""
-        try:
-            # Freeze sample count
-            status, cur_count, cur_index = ul.get_status(self.board_num, FunctionType.AIFUNCTION)
-            nsamp = min(cur_count, self._max_samples)
+    def getTimeData(self, startTime) -> float:
+        currentTime = time.perf_counter()
+        timeElapsed = currentTime - startTime
 
-            # Stop the device so no new data arrive while we copy
-            ul.stop_background(self.board_num, FunctionType.AIFUNCTION)
+        return timeElapsed
 
-            buf_ptr = cast(self._memhandle, POINTER(c_ushort))
-            data: List[Tuple[float, float]] = []
+    def recordData(self, time: float, signal: float) -> None:
+        self.data.append([time, signal])
 
-            if cur_count < self._max_samples:
-                # No wrap‑around – samples are already chronological
-                first = 0
-            else:
-                # Buffer wrapped – earliest sample is *next* after cur_index
-                first = (cur_index + 1) % self._max_samples
+    def writeData(self, data: list) -> None:
 
-            for i in range(nsamp):
-                idx = (first + i) % self._max_samples
-                volts = ul.to_eng_units(self.board_num, self.ai_range, buf_ptr[idx])
-                t = i / _SAMPLE_RATE  # 0‑based timeline aligned to first kept sample
-                data.append((t, volts))
+        fullFilename = self.operatorInitials.upper() + "_" + self.getSystemTime() # no file extension name
+        dataFile = open(fullFilename, "w")
 
-            self._write_file(data)
-        finally:
-            ul.win_buf_free(self._memhandle)
-            self._memhandle = None
+        # Data formatting and writes to file
+        # TO FORMAT: [TIME] <TAB> [SIGNAL] <NEW LINE>
+        for i in range(len(data)):
+            time_i = self.data[i][0]
+            signal_i = self.data[i][1]
 
-    # ------------------------------------------------------------------
-    # Internal helper
-    # ------------------------------------------------------------------
-    def _write_file(self, data: List[Tuple[float, float]]) -> None:
-        fname = f"{self.operatorInitials.upper()}_{datetime.now().strftime(_TIMEFMT)}.txt"
-        with open(fname, "w", encoding="utf‑8") as fh:
-            for t, v in data:
-                fh.write(f"{t:.6f}\t{v:.6f}\n")
+            message = f"{time_i:.4f}\t{signal_i:.4f}\n"
+            dataFile.write(message)
 
-    # ------------------------------------------------------------------
-    # Destructor – make *sure* the board stops
-    # ------------------------------------------------------------------
-    def __del__(self):
-        try:
-            if self._memhandle:
-                ul.stop_background(self.board_num, FunctionType.AIFUNCTION)
-                ul.win_buf_free(self._memhandle)
-        except Exception:
-            pass
+        dataFile.close()
+
+    def getSystemTime(self) -> str:
+        now = datetime.now()
+        formatted = now.strftime("%y%m%d_%H%M%S")
+
+        return formatted
+
+    def _log_loop(self, duration_s: float):
+        interval   = 1.0 / self.SAMPLING_RATE_HZ
+        start      = time.perf_counter()
+        next_tick  = start
+        while self._logging and time.perf_counter() - start < duration_s:
+            t_rel   = time.perf_counter() - start
+            value   = self.getSignalData()
+            with self._log_lock:
+                self.data.append((t_rel, value))
+            next_tick += interval
+            time.sleep(max(0.0, next_tick - time.perf_counter()))
+        self._logging = False           # finishes automatically
+
+    def start_logging(self, duration_s: float):
+        if self._logging:      # already running
+            return
+        self.data     = []     # clear previous run
+        self._logging = True
+        self._log_thread = threading.Thread(
+            target=self._log_loop, args=(duration_s,), daemon=True)
+        self._log_thread.start()
+
+    def stop_logging(self):
+        self._logging = False
+        if self._log_thread:
+            self._log_thread.join()
+
+    def is_logging(self) -> bool:       # helper for GUI
+        return self._logging
