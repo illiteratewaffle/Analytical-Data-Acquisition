@@ -1,80 +1,69 @@
 from mcculw import ul
-from mcculw.enums import ULRange
+from mcculw.enums import ULRange, ScanOptions, FunctionType
 from mcculw.ul import ULError
 from mcculw.device_info import DaqDeviceInfo
 
-import time
+from ctypes import cast, POINTER, c_ushort
 from datetime import datetime
+import time
 
 class DataAcquisition:
     def __init__(self):
-        # board number: found in InstaCal
         self.board_num = 0
-
-        # channel/range: see ports in MCCDAQ manual
-        self.channel = 0
-        self.ai_range = ULRange.BIP20VOLTS  # "ai" = analog input
-
-        self.data = []
-        self.startTime = time.perf_counter()
-
+        self.channel = 0  # differential CH0 = CH0 HI / CH0 LO
+        self.ai_range = ULRange.BIP20VOLTS
         self.operatorInitials = "NULL"
 
+        self.sample_rate = 10000  # Hz
+        self.duration = 1         # seconds
+        self.samples_per_channel = self.sample_rate * self.duration
+
     def mainLoop(self) -> None:
-        self.startTime = time.perf_counter()
-        
-        # todo: make it run for x amount of time
-        #while (1 == 1):
-        for i in range(1):
-            signalValue = self.getSignalData()
-            timeValue = self.getTimeData(self.startTime)
-            self.recordData(timeValue, signalValue)
-
-        self.writeData(self.data)
-
-
-    def getSignalData(self) -> (float | None):
         try:
-            # GETS SIGNAL VALUE (in voltage)
-            # Get a value from the device
-            value = ul.a_in(self.board_num, self.channel, self.ai_range)
-            # Convert the raw value to normal units
-            units_value = ul.to_eng_units(self.board_num, self.ai_range, value)
+            # Allocate memory for scan
+            memhandle = ul.win_buf_alloc(self.samples_per_channel)
+            if not memhandle:
+                raise RuntimeError("Failed to allocate memory buffer.")
 
-            return units_value
+            # Start scan
+            ul.a_in_scan(
+                self.board_num,
+                self.channel,
+                self.channel,  # same low and high channel = 1 channel
+                self.samples_per_channel,
+                self.sample_rate,
+                self.ai_range,
+                memhandle,
+                ScanOptions.BACKGROUND
+            )
 
-        except ULError as e:  # Display the error (if needed)
-            print("A UL error occurred. Code: " + str(e.errorcode) + " Message: " + e.message)
+            # Wait until scan is done
+            status = ul.get_status(self.board_num, FunctionType.AIFUNCTION)
+            while status[0] == 1:  # 1 = running
+                time.sleep(0.01)
+                status = ul.get_status(self.board_num, FunctionType.AIFUNCTION)
 
-            return None
+            # Convert data to list of (time, voltage)
+            buffer = cast(memhandle, POINTER(c_ushort))
+            data = []
+            for i in range(self.samples_per_channel):
+                raw_val = buffer[i]
+                volts = ul.to_eng_units(self.board_num, self.ai_range, raw_val)
+                timestamp = i / self.sample_rate
+                data.append((timestamp, volts))
 
-    def getTimeData(self, startTime) -> float:
-        currentTime = time.perf_counter()
-        timeElapsed = currentTime - startTime
+            self.writeData(data)
 
-        return timeElapsed
-
-    def recordData(self, time: float, signal: float) -> None:
-        self.data.append([time, signal])
+        finally:
+            ul.stop_background(self.board_num, FunctionType.AIFUNCTION)
+            ul.win_buf_free(memhandle)
 
     def writeData(self, data: list) -> None:
-
-        fullFilename = self.operatorInitials.upper() + "_" + self.getSystemTime() # no file extension name
-        dataFile = open(fullFilename, "w")
-
-        # Data formatting and writes to file
-        # TO FORMAT: [TIME] <TAB> [SIGNAL] <NEW LINE>
-        for i in range(len(data)):
-            time_i = self.data[i][0]
-            signal_i = self.data[i][1]
-
-            message = f"{time_i:.4f}\t{signal_i:.4f}\n"
-            dataFile.write(message)
-
-        dataFile.close()
+        fullFilename = self.operatorInitials.upper() + "_" + self.getSystemTime()
+        with open(fullFilename, "w") as dataFile:
+            for t, v in data:
+                dataFile.write(f"{t:.4f}\t{v:.4f}\n")
 
     def getSystemTime(self) -> str:
         now = datetime.now()
-        formatted = now.strftime("%y%m%d_%H%M%S")
-
-        return formatted
+        return now.strftime("%y%m%d_%H%M%S")
