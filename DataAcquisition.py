@@ -26,6 +26,7 @@ class DataAcquisition:
 
         # sampling rate
         self.sample_rate = 10000 #Hz
+        self.num_samples =
 
         self.data = []
         self.startTime = time.perf_counter()
@@ -76,7 +77,7 @@ class DataAcquisition:
             time_i = self.data[i][0]
             signal_i = self.data[i][1]
 
-            message = f"{time_i:.4f}\t{signal_i:.4f}\n"
+            message = f"{time_i:.6f}\t{signal_i:.4f}\n"
             dataFile.write(message)
 
         dataFile.close()
