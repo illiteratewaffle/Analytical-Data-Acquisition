@@ -56,11 +56,11 @@ class DataAcquisition:
 
             return None
 
-    def getTimeData(self, startTime) -> float:
-        currentTime = time.perf_counter()
-        timeElapsed = currentTime - startTime
-
-        return timeElapsed
+    def getTimeData(self) -> float:
+        now = datetime.now()
+        theBeginning = datetime(1904, 1, 1, 0, 0, 0)
+        seconds_since_1904 = (now - theBeginning).total_seconds()
+        return seconds_since_1904
 
     def recordData(self, time: float, signal: float) -> None:
         self.data.append([time, signal])

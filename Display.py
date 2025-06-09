@@ -1,6 +1,7 @@
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox
+from datetime import datetime
 
 import matplotlib
 matplotlib.use("TkAgg") # use Tk backend for embedding
@@ -161,7 +162,14 @@ class Display:
         initials = self.initialsVar.get().strip().upper() or "NULL"
         self.daq.operatorInitials = initials
 
-        self.daq.data = list(zip(self.xData, self.yData))
+        epoch = datetime(1904, 1, 1)
+        data_with_epoch_times = []
+        for _, y in zip(self.xData, self.yData):
+            now = datetime.now()
+            timestamp = (now - epoch).total_seconds()
+            data_with_epoch_times.append([timestamp, y])
+
+        self.daq.data = data_with_epoch_times
         try:
             self.daq.writeData(self.daq.data)
             print("Data written to disk.")
