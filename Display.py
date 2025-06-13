@@ -13,7 +13,7 @@ from Valves import Valves
 
 class Display:
     # GUI refresh rate (ms)
-    UPDATE_MS = 100  # 10 Hz
+    UPDATE_MS = 1  # 10 Hz
 
     def __init__(self, root):
         self.root = root

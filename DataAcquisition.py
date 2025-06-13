@@ -76,7 +76,7 @@ class DataAcquisition:
             time_i = self.data[i][0]
             signal_i = self.data[i][1]
 
-            message = f"{time_i:.4f}\t{signal_i:.4f}\n"
+            message = f"{time_i}\t{signal_i:.4f}\n"
             dataFile.write(message)
 
         dataFile.close()
