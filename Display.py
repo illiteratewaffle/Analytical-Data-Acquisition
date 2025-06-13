@@ -1,7 +1,7 @@
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import matplotlib
 matplotlib.use("TkAgg") # use Tk backend for embedding
@@ -12,8 +12,6 @@ from DataAcquisition import DataAcquisition
 from Valves import Valves
 
 class Display:
-    # GUI refresh rate (ms)
-    UPDATE_MS = 1  # 10 Hz
 
     def __init__(self, root):
         self.root = root
@@ -21,6 +19,11 @@ class Display:
 
         # Data acquisition object
         self.daq = DataAcquisition()
+
+        #GUI REFRESH RATE DEPENDENT ON DATA ACQUISITION UPDATES
+        self.blockMS = max(1, int(round(
+            1000 * self.daq.blockSize / self.daq.samplingFrequency
+        )))
 
         # acquisition state
         self.recording = True
@@ -89,7 +92,7 @@ class Display:
         self.yData = []
 
         # Schedule first GUI update
-        self.jobId = self.root.after(self.UPDATE_MS, self.updateLoop)
+        self.jobId = self.root.after(self.blockMS, self.updateLoop)
 
         # Close handler
         self.root.protocol("WM_DELETE_WINDOW", self.closeWindow)
@@ -132,20 +135,20 @@ class Display:
                 return  # stop scheduling further updates
 
             try:
-                signal = self.daq.getSignalData()
+                meanVoltage = self.daq.getSignalData()
             except Exception as exc:
                 print("Error reading signal:", exc)
-                signal = None
+                meanVoltage = None
 
-            if signal is not None:
+            if meanVoltage is not None:
                 remaining = max(0.0, self.maxDuration - elapsed)  # calculate time remaining
 
                 self.xData.append(elapsed)
-                self.yData.append(signal)
+                self.yData.append(meanVoltage)
 
                 self.timeVar.set(f"{elapsed:.4f}")
                 self.remainingVar.set(f"{remaining:.4f}")  # update time remaining display
-                self.signalVar.set(f"{signal:.4f}")
+                self.signalVar.set(f"{meanVoltage:.4f}")
 
                 self.line.set_data(self.xData, self.yData)
                 self.ax.relim()
@@ -153,28 +156,28 @@ class Display:
                 self.canvas.draw_idle()
 
         # reschedule next refresh
-        self.jobId = self.root.after(self.UPDATE_MS, self.updateLoop)
+        self.jobId = self.root.after(self.blockMS, self.updateLoop)
 
     def writeDataToFile(self) -> None:
-        if not self.xData:
-            return # nothing to save
+        if not self.xData: #if nothing collected
+            return
 
+        # Pass operator initials down to the DAQ object for filename
         initials = self.initialsVar.get().strip().upper() or "NULL"
         self.daq.operatorInitials = initials
 
-        epoch = datetime(1904, 1, 1)
-        data_with_epoch_times = []
-        for _, y in zip(self.xData, self.yData):
-            now = datetime.now()
-            timestamp = (now - epoch).total_seconds()
-            data_with_epoch_times.append([timestamp, y])
+        # Convert relative times in xData to absolute epoch seconds
+        mac_epoch   = datetime(1904, 1, 1)
+        run_start   = datetime.now() - timedelta(seconds=self.xData[-1])
+        out_records = []
 
-        self.daq.data = data_with_epoch_times
-        try:
-            self.daq.writeData(self.daq.data)
-            print("Data written to disk.")
-        except Exception as exc:
-            messagebox.showerror("Write Error", f"Could not write data file:\n{exc}")
+        for t_rel, v in zip(self.xData, self.yData):
+            epoch_secs = (run_start + timedelta(seconds=t_rel) - mac_epoch)\
+                          .total_seconds()
+            out_records.append((epoch_secs, v))
+
+        # Send the prepared list to the DAQ for actual file writing
+        self.daq.writeData(out_records)
 
     def closeWindow(self) -> None:
         # cancel scheduled callback

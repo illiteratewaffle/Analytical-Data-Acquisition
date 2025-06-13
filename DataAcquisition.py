@@ -1,22 +1,27 @@
-from __future__ import annotations
-
+import numpy as np
 from mcculw import ul
-from mcculw.enums import ULRange, ScanOptions, FunctionType
+from mcculw.enums import ULRange, ScanOptions
 from mcculw.ul import ULError
 from mcculw.device_info import DaqDeviceInfo
+import ctypes as ct
 
 import time
 from datetime import datetime
-from ctypes import cast, POINTER, c_ushort
-from typing import List, Tuple
 
-__all__ = ["DataAcquisition"]
+def _create_float_buffer(n: int):
+    """
+    Return a ctypes float array of length n.
+    Uses ul.create_float_buffer() when available (UL ≥ 1.0.1),
+    else falls back to a plain ctypes array. No dependencies.
+    """
+    return ul.create_float_buffer(n) if hasattr(ul, "create_float_buffer") \
+           else (ct.c_float * n)()
 
 class DataAcquisition:
+    blockSize = 1
+    samplingFrequency = 10000 #Hz
 
-    TIME_FORMAT = "%y%m%d_%H%M%S"
-
-    def __init__(self) -> None:
+    def __init__(self):
         # board number: found in InstaCal
         self.board_num = 0
 
@@ -24,13 +29,13 @@ class DataAcquisition:
         self.channel = 0
         self.ai_range = ULRange.BIP20VOLTS  # "ai" = analog input
 
-        # sampling rate
-        self.sample_rate = 10000 #Hz
-
         self.data = []
         self.startTime = time.perf_counter()
 
         self.operatorInitials = "NULL"
+
+        #allocate buffer for 1 block
+        self._buf = (ct.c_uint16 * self.blockSize)()
 
     def mainLoop(self) -> None:
         self.startTime = time.perf_counter()
@@ -47,9 +52,20 @@ class DataAcquisition:
 
     def getSignalData(self) -> (float | None):
         try:
-            raw = ul.a_in(self.board_num, self.channel, self.ai_range)
-            processed = ul.to_eng_units(self.board_num, self.ai_range, raw)
-            return processed
+            ul.a_in_scan(self.board_num,
+                         self.channel,
+                         self.channel,
+                         self.blockSize,
+                         self.samplingFrequency,
+                         self.ai_range,
+                         self._buf,
+                         0)
+
+            # Convert ctypes buffer. NumPy array for fast math
+            countsArr = np.ctypeslib.as_array(self._buf)
+            meanCounts = int(countsArr.mean())
+            meanVolts = ul.to_eng_units(self.board_num, self.ai_range, meanCounts)
+            return float(meanVolts)
 
         except ULError as e:  # Display the error (if needed)
             print("A UL error occurred. Code: " + str(e.errorcode) + " Message: " + e.message)
@@ -65,21 +81,20 @@ class DataAcquisition:
     def recordData(self, time: float, signal: float) -> None:
         self.data.append([time, signal])
 
-    def writeData(self, data: list = None) -> None:
+    def writeData(self, data: list[tuple[float, float]]) -> None:
+        if not data:
+            return
 
-        fullFilename = self.operatorInitials.upper() + "_" + self.getSystemTime() # no file extension name
-        dataFile = open(fullFilename, "w")
+        # Build filename: <INITIALS>_YYMMDD_HHMMSS
+        timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+        initials  = (self.operatorInitials or "NULL").upper()
+        fname     = f"{initials}_{timestamp}"
 
-        # Data formatting and writes to file
-        # TO FORMAT: [TIME] <TAB> [SIGNAL] <NEW LINE>
-        for i in range(len(data)):
-            time_i = self.data[i][0]
-            signal_i = self.data[i][1]
+        with open(fname, "w", encoding="utf-8") as f:
+            for epoch, mean_v in data: # iterate over *argument* list
+                f.write(f"{epoch:.4f}\t{mean_v:.4f}\n")
 
-            message = f"{time_i}\t{signal_i:.4f}\n"
-            dataFile.write(message)
-
-        dataFile.close()
+        print(f"Saved {len(data)} rows : {fname}")
 
     def getSystemTime(self) -> str:
         now = datetime.now()
