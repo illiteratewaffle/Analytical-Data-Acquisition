@@ -18,7 +18,7 @@ def _create_float_buffer(n: int):
            else (ct.c_float * n)()
 
 class DataAcquisition:
-    blockSize = 1
+    blockSize = 100
     samplingFrequency = 10000 #Hz
 
     def __init__(self):
