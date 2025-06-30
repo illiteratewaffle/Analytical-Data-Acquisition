@@ -1,103 +1,111 @@
 import numpy as np
 from mcculw import ul
-from mcculw.enums import ULRange, ScanOptions
+from mcculw.enums import ULRange
 from mcculw.ul import ULError
-from mcculw.device_info import DaqDeviceInfo
 import ctypes as ct
-
-import time
+import threading, queue, time
 from datetime import datetime
 
-def _create_float_buffer(n: int):
-    """
-    Return a ctypes float array of length n.
-    Uses ul.create_float_buffer() when available (UL ≥ 1.0.1),
-    else falls back to a plain ctypes array. No dependencies.
-    """
-    return ul.create_float_buffer(n) if hasattr(ul, "create_float_buffer") \
-           else (ct.c_float * n)()
 
 class DataAcquisition:
     blockSize = 100
-    samplingFrequency = 10000 #Hz
+    samplingFrequency = 10_000  # Hz
 
     def __init__(self):
-        # board number: found in InstaCal
+        # Board-specific settings (unchanged)
         self.board_num = 0
+        self.channel   = 0
+        self.ai_range  = ULRange.BIP20VOLTS
 
-        # channel/range: see ports in MCCDAQ manual
-        self.channel = 0
-        self.ai_range = ULRange.BIP20VOLTS  # "ai" = analog input
-
-        self.data = []
-        self.startTime = time.perf_counter()
-
-        self.operatorInitials = "NULL"
-
-        #allocate buffer for 1 block
+        # Pre-allocate one-block buffer
         self._buf = (ct.c_uint16 * self.blockSize)()
 
-    def mainLoop(self) -> None:
-        self.startTime = time.perf_counter()
-        
-        # todo: make it run for x amount of time
-        #while (1 == 1):
-        for i in range(1):
-            signalValue = self.getSignalData()
-            timeValue = self.getTimeData(self.startTime)
-            self.recordData(timeValue, signalValue)
+        # Run bookkeeping
+        self.data: list[tuple[float, float]] = []
+        self.operatorInitials: str = "NULL"
 
-        self.writeData(self.data)
+        # Threading helpers
+        self._queue:   queue.Queue | None = None
+        self._thread:  threading.Thread | None = None
+        self._running = threading.Event()
 
+    # ------------------------------------------------------------
+    # Public control surface
+    # ------------------------------------------------------------
+    def attach_queue(self, q: queue.Queue) -> None:
+        """GUI supplies a queue to receive (t_rel, volts)."""
+        self._queue = q
 
-    def getSignalData(self) -> (float | None):
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._running.set()
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def stop(self, join_timeout: float = 1.0) -> None:
+        self._running.clear()
+        if self._thread:
+            self._thread.join(timeout=join_timeout)
+            self._thread = None
+        self.writeData(self.data)   # auto-save
+        self.data = []              # clear for next run
+
+    # ------------------------------------------------------------
+    # Background worker — runs in its own thread
+    # ------------------------------------------------------------
+    def _worker(self) -> None:
+        t0 = time.perf_counter()
+        while self._running.is_set():
+            volts = self.getSignalData()
+            if volts is None:
+                continue            # skip bad scan, keep running
+
+            t_rel = time.perf_counter() - t0
+            epoch1904 = self.getTimeData()
+            self.recordData(epoch1904, volts)
+
+            if self._queue:
+                try:
+                    self._queue.put_nowait((t_rel, volts))
+                except queue.Full:      # drop oldest if GUI lags
+                    _ = self._queue.get_nowait()
+                    self._queue.put_nowait((t_rel, volts))
+            # a_in_scan blocks ≈ blockSize/samplingFrequency
+            # so no extra sleep is needed
+
+    # ------------------------------------------------------------
+    # Low-level helpers (original logic kept intact)
+    # ------------------------------------------------------------
+    def getSignalData(self) -> float | None:
         try:
             ul.a_in_scan(self.board_num,
-                         self.channel,
-                         self.channel,
-                         self.blockSize,
-                         self.samplingFrequency,
-                         self.ai_range,
-                         self._buf,
-                         0)
+                         self.channel, self.channel,
+                         self.blockSize, self.samplingFrequency,
+                         self.ai_range, self._buf, 0)
 
-            # Convert ctypes buffer. NumPy array for fast math
-            countsArr = np.ctypeslib.as_array(self._buf)
-            meanCounts = int(countsArr.mean())
-            meanVolts = ul.to_eng_units(self.board_num, self.ai_range, meanCounts)
-            return float(meanVolts)
-
-        except ULError as e:  # Display the error (if needed)
-            print("A UL error occurred. Code: " + str(e.errorcode) + " Message: " + e.message)
-
+            counts = np.ctypeslib.as_array(self._buf).mean()
+            return float(ul.to_eng_units(self.board_num, self.ai_range, int(counts)))
+        except ULError as e:
+            print("UL error:", e.errorcode, e.message)
             return None
 
     def getTimeData(self) -> float:
-        now = datetime.now()
-        theBeginning = datetime(1904, 1, 1, 0, 0, 0)
-        seconds_since_1904 = (now - theBeginning).total_seconds()
-        return seconds_since_1904
+        return (datetime.now() - datetime(1904, 1, 1)).total_seconds()
 
-    def recordData(self, time: float, signal: float) -> None:
-        self.data.append([time, signal])
+    def recordData(self, epoch1904: float, volts: float) -> None:
+        self.data.append((epoch1904, volts))
 
+    # ------------------------------------------------------------
+    # File I/O (pattern unchanged)
+    # ------------------------------------------------------------
     def writeData(self, data: list[tuple[float, float]]) -> None:
         if not data:
             return
-
-        # Build filename: <INITIALS>_YYMMDD_HHMMSS
-        timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
-        initials  = (self.operatorInitials or "NULL").upper()
-        fname     = f"{initials}_{timestamp}"
-
+        stamp    = datetime.now().strftime("%y%m%d_%H%M%S")
+        initials = (self.operatorInitials or "NULL").upper()
+        fname    = f"{initials}_{stamp}"
         with open(fname, "w", encoding="utf-8") as f:
-            for epoch, mean_v in data: # iterate over *argument* list
-                f.write(f"{epoch:.4f}\t{mean_v:.4f}\n")
-
-        print(f"Saved {len(data)} rows : {fname}")
-
-    def getSystemTime(self) -> str:
-        now = datetime.now()
-        formatted = now.strftime("%y%m%d_%H%M%S")
-
-        return formatted
+            for epoch, v in data:
+                f.write(f"{epoch:.4f}\t{v:.4f}\n")
+        print(f"Saved {len(data)} rows to {fname}")
