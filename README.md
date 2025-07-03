@@ -26,3 +26,29 @@ Figure 1. List of available Python installers.
 Likely will show up as Board #0
 
 ## 3. Program Files
+
+3.1. Create a folder called "DAQApp" on desktop
+
+3.2. Move all python files into DAQApp folder.
+
+    Files to be moved:
+
+    DataAcquisition.py
+    Display.py
+    main.py
+    Settings.py
+    Valves.py
+
+## 4. Install Packages
+
+4.1. Open the command prompt by pressing the Windows key. Then search up "cmd" and open command prompt.
+
+4.2. Copy and paste this into the command prompt.
+    
+    pip install numpy matplotlib mcculw
+
+4.3. Wait until you see it finishes (you'll see "successfully installed").
+
+## 5. Run the program
+
+5.1. 
