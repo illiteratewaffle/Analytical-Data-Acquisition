@@ -21,23 +21,21 @@ Figure 1. List of available Python installers.
 
 2.1. Go to https://digilent.com/reference/software/instacal/start and download InstaCal
 
-2.2. After installing InstaCal, plug in your DAQ board and ensure it shows up in InstaCal.
+2.2. After installing InstaCal, connect your DAQ board to your computer and ensure it shows up in InstaCal.
 
-Likely will show up as Board #0
+(Likely will show up as Board #0)
 
 ## 3. Program Files
 
-3.1. Create a folder called "DAQApp" on desktop
+3.1. Go to https://github.com/illiteratewaffle/valvey
 
-3.2. Move all python files into DAQApp folder.
+3.2. Press the green "<> Code" button and press Download ZIP (Figure 2).
 
-    Files to be moved:
+![GitHub download screenshot](assets/github_download.png)
 
-    DataAcquisition.py
-    Display.py
-    main.py
-    Settings.py
-    Valves.py
+Figure 2. Loc
+
+3.3. 
 
 ## 4. Install Packages
 
