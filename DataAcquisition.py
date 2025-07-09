@@ -29,9 +29,7 @@ class DataAcquisition:
         self._thread:  threading.Thread | None = None
         self._running = threading.Event()
 
-    # ------------------------------------------------------------
     # Public control surface
-    # ------------------------------------------------------------
     def attach_queue(self, q: queue.Queue) -> None:
         """GUI supplies a queue to receive (t_rel, volts)."""
         self._queue = q
@@ -51,9 +49,7 @@ class DataAcquisition:
         self.writeData(self.data)   # auto-save
         self.data = []              # clear for next run
 
-    # ------------------------------------------------------------
     # Background worker — runs in its own thread
-    # ------------------------------------------------------------
     def _worker(self) -> None:
         t0 = time.perf_counter()
         while self._running.is_set():
@@ -74,9 +70,7 @@ class DataAcquisition:
             # a_in_scan blocks ≈ blockSize/samplingFrequency
             # so no extra sleep is needed
 
-    # ------------------------------------------------------------
     # Low-level helpers (original logic kept intact)
-    # ------------------------------------------------------------
     def getSignalData(self) -> float | None:
         try:
             ul.a_in_scan(self.board_num,
@@ -96,9 +90,7 @@ class DataAcquisition:
     def recordData(self, epoch1904: float, volts: float) -> None:
         self.data.append((epoch1904, volts))
 
-    # ------------------------------------------------------------
     # File I/O (pattern unchanged)
-    # ------------------------------------------------------------
     def writeData(self, data: list[tuple[float, float]]) -> None:
         if not data:
             return

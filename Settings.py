@@ -17,31 +17,23 @@ from typing import Dict, Any
 
 @dataclass
 class Settings:
-    # ------------------------------------------------------------------
     # Acquisition parameters
-    # ------------------------------------------------------------------
     channel: int = 0                 # DAQ analog channel wired to detector
     sampling_frequency: int = 10_000 # Hz, e.g. 10_000 for 10 kHz
     block_size: int = 1_000          # samples grabbed per driver call
     run_duration: float = 30.0       # seconds, total length of a run
 
-    # ------------------------------------------------------------------
     # Valve timing map  { valve_name : seconds_from_start }
-    # ------------------------------------------------------------------
     valve_schedule: Dict[str, float] = field(default_factory=lambda: {
         # "ValveLabel" : time_in_seconds   (edit as needed)
         "SampleInject": 0.0,     # open right at t = 0 s
         "BackFlush"   : 15.0,    # swap after 15 seconds
     })
 
-    # ------------------------------------------------------------------
     # Misc / operator info
-    # ------------------------------------------------------------------
     operator_initials: str = "NULL"   # appears in data‑file names
 
-    # ------------------------------------------------------------------
     # Helpers
-    # ------------------------------------------------------------------
     def validate(self) -> None:
         """Raise ValueError if any field is outside a sane range."""
         if not (0 <= self.channel <= 15):
@@ -68,14 +60,12 @@ class Settings:
             "operator_initials" : self.operator_initials,
         }
 
-    def __str__(self) -> str:  # pragma: no cover
+    def __str__(self) -> str:
         items = [f"{k}: {v}" for k, v in self.as_dict().items()]
         return "\n".join(items)
 
 
-# ----------------------------------------------------------------------
 # Global singleton – import once, everywhere
-# ----------------------------------------------------------------------
 settings = Settings()
 
 # Validate immediately so typos are caught on launch

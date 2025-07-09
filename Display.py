@@ -35,18 +35,16 @@ class Display:
         self.startTime   = 0.0
         self.maxDuration = 30  # s
 
-        # ---------------- Build all widgets ---------------------
+        # Build all widgets
         self._build_widgets()
 
         # periodic GUI refresh
         self.jobId = self.root.after(self.blockMS, self.updateLoop)
         self.root.protocol("WM_DELETE_WINDOW", self.closeWindow)
 
-    # ------------------------------------------------------------
     # GUI construction
-    # ------------------------------------------------------------
     def _build_widgets(self):
-        # ---- top bar ------------------------------------------
+        # top bar
         top = ttk.Frame(self.root, padding=(10, 5))
         top.pack(fill=tk.X)
 
@@ -66,7 +64,7 @@ class Display:
 
         ttk.Separator(self.root, orient="horizontal").pack(fill=tk.X, pady=4)
 
-        # ---- info + valve panel --------------------------------
+        # info + valve panel
         main = ttk.Frame(self.root)
         main.pack(fill=tk.X, padx=10)
 
@@ -89,7 +87,7 @@ class Display:
         self.remainingVar = tk.StringVar(value="0.0000")
         ttk.Label(info, textvariable=self.remainingVar).grid(row=0, column=5)
 
-        # ---- Y-axis scaling controls ---------------------------
+        # Y-axis scaling controls
         yctrl = ttk.Frame(info)
         yctrl.grid(row=1, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
@@ -115,7 +113,7 @@ class Display:
         )
         self.yMaxEntry.pack(side=tk.LEFT)
 
-        # ---- valve buttons ------------------------------------
+        # valve buttons
         valve_f = ttk.Frame(main, padding=(20, 0))
         valve_f.pack(side=tk.RIGHT, anchor="ne")
 
@@ -132,7 +130,7 @@ class Display:
         )
         self.buttonB.pack()
 
-        # ---- matplotlib figure --------------------------------
+        # matplotlib figure
         self.fig, self.ax = plt.subplots(figsize=(6, 4))
         self.ax.set_xlabel("Time (s)")
         self.ax.set_ylabel("Signal (V)")
@@ -145,9 +143,7 @@ class Display:
         # data buffers
         self.xData, self.yData = [], []
 
-    # ------------------------------------------------------------
     # Y-axis helpers
-    # ------------------------------------------------------------
     def _toggleAutoscale(self):
         state = "disabled" if self.autoscaleVar.get() else "normal"
         self.yMinEntry.config(state=state)
@@ -170,9 +166,7 @@ class Display:
             # ignore bad limits
             return None
 
-    # ------------------------------------------------------------
     # Start / Stop callbacks
-    # ------------------------------------------------------------
     def startRecording(self):
         if self.recording:
             return
@@ -202,9 +196,7 @@ class Display:
         self.startBtn.config(state="normal")
         self.stopBtn.config(state="disabled")
 
-    # ------------------------------------------------------------
     # Periodic update loop
-    # ------------------------------------------------------------
     def updateLoop(self):
         # pull any queued samples
         while not self.dataQueue.empty():
@@ -239,9 +231,7 @@ class Display:
         # schedule next update
         self.jobId = self.root.after(self.blockMS, self.updateLoop)
 
-    # ------------------------------------------------------------
     # Valve buttons
-    # ------------------------------------------------------------
     def toggleValveA(self):
         self.valveA_on = not self.valveA_on
         if self.valveA_on:
@@ -262,9 +252,7 @@ class Display:
         else:
             self.buttonB.config(bg="#D3D3D3")
 
-    # ------------------------------------------------------------
     # Graceful shutdown
-    # ------------------------------------------------------------
     def closeWindow(self):
         if self.recording:
             self.stopRecording()
@@ -273,9 +261,7 @@ class Display:
         self.root.destroy()
 
 
-# ----------------------------------------------------------------
 # Stand-alone entry point
-# ----------------------------------------------------------------
 def main():
     root = tk.Tk()
     Display(root)
