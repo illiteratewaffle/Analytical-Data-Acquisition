@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from DataAcquisition import DataAcquisition
 from Valves           import Valves
 
+#todo: bug: autoscale Y selection actually autoscales X instead
 
 class Display:
     OPEN_CLR   = "#90EE90"   # light-green when valve is open
