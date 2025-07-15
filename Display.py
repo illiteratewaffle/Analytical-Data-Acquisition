@@ -1,192 +1,513 @@
 import time
+import queue
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
+from datetime import datetime, timedelta
+import math
 
 import matplotlib
-matplotlib.use("TkAgg") # use Tk backend for embedding
+
+matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 
 from DataAcquisition import DataAcquisition
 from Valves import Valves
+from Settings import settings
+
 
 class Display:
-    # GUI refresh rate (ms)
-    UPDATE_MS = 100  # 10 Hz
+    """Real-time GUI with two valve-swap schedules, X/Y autoscaling, and auto-run."""
 
-    def __init__(self, root):
+    OPEN_CLR = "#90EE90"
+    CLOSED_CLR = "#D3D3D3"
+
+    # ──────────────────────────────────────────────────────────
+    #  Construction
+    # ──────────────────────────────────────────────────────────
+    def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Real‑Time Signal Monitor")
+        self.root.title("Real-Time Signal Monitor")
 
-        # Data acquisition object
         self.daq = DataAcquisition()
+        self.dataQueue = queue.Queue()
+        self.daq.attach_queue(self.dataQueue)
 
-        # acquisition state
-        self.recording = True
-        self.startTime = time.perf_counter()
+        self.blockMS = max(
+            1,
+            round(1000 * self.daq.blockSize / self.daq.samplingFrequency),
+        )
 
-        # Duration of recording data
-        self.maxDuration = 30  # seconds
+        # Run-state
+        self.recording = False
+        self.maxDuration = 30.0
+        self.currentValve = "A"
+        self.swapJobId1 = None
+        self.swapJobId2 = None
+        self.swap1Time = 0.0
+        self.swap2Time = 0.0
 
-        # Top panel: Operator initials
-        top = ttk.Frame(root, padding=(10, 5))
-        top.pack(side=tk.TOP, fill=tk.X)
+        # Auto-run state
+        self.auto_run_job = None
+        self.next_run_time = None
+
+        # Build GUI
+        self._build_widgets()
+
+        self.jobId = self.root.after(self.blockMS, self.updateLoop)
+        self.root.protocol("WM_DELETE_WINDOW", self.closeWindow)
+
+        # Start auto-run scheduler if enabled
+        if settings.auto_run:
+            self._start_auto_run_scheduler()
+
+    # ──────────────────────────────────────────────────────────
+    #  GUI layout
+    # ──────────────────────────────────────────────────────────
+    def _build_widgets(self):
+        # Top bar
+        top = ttk.Frame(self.root, padding=(10, 5))
+        top.pack(fill=tk.X)
 
         ttk.Label(top, text="Operator Initials:").grid(row=0, column=0, sticky="w")
         self.initialsVar = tk.StringVar()
-        initialsEntry = ttk.Entry(top, width=5, textvariable=self.initialsVar)
-        initialsEntry.grid(row=0, column=1, sticky="w", padx=(2, 15))
-        initialsEntry.focus_set()
+        ttk.Entry(top, width=5, textvariable=self.initialsVar).grid(
+            row=0,
+            column=1,
+            padx=(2, 15),
+        )
 
-        ttk.Separator(root, orient="horizontal").pack(fill=tk.X, pady=4)
+        self.startBtn = ttk.Button(top, text="Start", command=self.startRecording)
+        self.startBtn.grid(row=0, column=2, padx=(10, 2))
 
-        # Main content area: Info on left, valves on right
-        main = ttk.Frame(root)
-        main.pack(side=tk.TOP, fill=tk.X, padx=10)
+        self.stopBtn = ttk.Button(top, text="Stop", command=self.stopRecording, state="disabled")
+        self.stopBtn.grid(row=0, column=3)
 
-        # Info panel (left)
+        ttk.Separator(self.root, orient="horizontal").pack(fill=tk.X, pady=4)
+
+        # Main frame
+        main = ttk.Frame(self.root)
+        main.pack(fill=tk.X, padx=10)
+
         info = ttk.Frame(main)
-        info.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        info.pack(side=tk.LEFT, expand=True)
 
+        # Live readouts
         ttk.Label(info, text="Time Elapsed (s):").grid(row=0, column=0, sticky="w")
         self.timeVar = tk.StringVar(value="0.0000")
-        ttk.Label(info, textvariable=self.timeVar).grid(row=0, column=1, sticky="w", padx=(4, 20))
+        ttk.Label(info, textvariable=self.timeVar).grid(row=0, column=1, padx=(4, 20))
 
         ttk.Label(info, text="Current Signal (V):").grid(row=0, column=2, sticky="w")
         self.signalVar = tk.StringVar(value="0.0000")
-        ttk.Label(info, textvariable=self.signalVar).grid(row=0, column=3, sticky="w", padx=(4, 20))
+        ttk.Label(info, textvariable=self.signalVar).grid(row=0, column=3, padx=(4, 20))
 
         ttk.Label(info, text="Time Remaining (s):").grid(row=0, column=4, sticky="w")
         self.remainingVar = tk.StringVar(value="0.0000")
-        ttk.Label(info, textvariable=self.remainingVar).grid(row=0, column=5, sticky="w")
+        ttk.Label(info, textvariable=self.remainingVar).grid(row=0, column=5)
 
-        # Valve control panel (right)
-        valve_frame = ttk.Frame(main, padding=(20, 0))
-        valve_frame.pack(side=tk.RIGHT, anchor="ne")
+        # Run-duration row
+        dur = ttk.Frame(info)
+        dur.grid(row=1, column=0, columnspan=6, sticky="w", pady=(6, 0))
+
+        ttk.Label(dur, text="Run Duration (s):").pack(side=tk.LEFT, padx=(0, 2))
+        self.durationVar = tk.StringVar(value="30")
+        ttk.Entry(dur, width=7, textvariable=self.durationVar).pack(side=tk.LEFT)
+
+        ttk.Label(dur, text="Presets:").pack(side=tk.LEFT, padx=(10, 2))
+        ttk.Button(dur, text="2 min", width=7, command=lambda: self.durationVar.set(str(2 * 60))).pack(side=tk.LEFT)
+        ttk.Button(dur, text="5 min", width=7, command=lambda: self.durationVar.set(str(5 * 60))).pack(side=tk.LEFT,
+                                                                                                       padx=2)
+        ttk.Button(dur, text="10 min", width=7, command=lambda: self.durationVar.set(str(10 * 60))).pack(side=tk.LEFT)
+
+        # Valve-swap rows
+        self._build_schedule_row(
+            info,
+            row=2,
+            start_label="Swap #1 – initial valve:",
+            time_label="Swap #1 in (s):",
+            prefix="1",
+        )
+
+        self._build_schedule_row(
+            info,
+            row=3,
+            start_label="Swap #2 – target valve:",
+            time_label="Swap #2 in (s):",
+            prefix="2",
+        )
+
+        self._updateScheduleLabels()
+
+        # Auto-run row
+        auto_run_f = ttk.Frame(info)
+        auto_run_f.grid(row=4, column=0, columnspan=6, sticky="w", pady=(10, 0))
+
+        self.autoRunVar = tk.BooleanVar(value=settings.auto_run)
+        ttk.Checkbutton(
+            auto_run_f,
+            text="Auto-run every",
+            variable=self.autoRunVar,
+            command=self._toggle_auto_run
+        ).pack(side=tk.LEFT)
+
+        # Interval
+        self.autoIntVar = tk.StringVar(value=str(settings.auto_run_interval))
+        ttk.Entry(auto_run_f, width=3, textvariable=self.autoIntVar).pack(side=tk.LEFT)
+        ttk.Label(auto_run_f, text="minutes").pack(side=tk.LEFT, padx=(0, 2))
+
+        # Next run display
+        self.nextRunVar = tk.StringVar(value="Next run: --:--:--")
+        ttk.Label(auto_run_f, textvariable=self.nextRunVar).pack(side=tk.LEFT, padx=(10, 0))
+
+        # Y-axis controls
+        yctrl = ttk.Frame(info)
+        yctrl.grid(row=5, column=0, columnspan=6, sticky="w", pady=(6, 0))
+
+        self.autoscaleVar = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            yctrl,
+            text="Autoscale Y",
+            variable=self.autoscaleVar,
+            command=self._toggleAutoscale,
+        ).pack(side=tk.LEFT)
+
+        ttk.Label(yctrl, text="Y min:").pack(side=tk.LEFT, padx=(10, 2))
+        self.yMinVar = tk.StringVar(value="0")
+        self.yMinEntry = ttk.Entry(yctrl, width=7, textvariable=self.yMinVar, state="disabled")
+        self.yMinEntry.pack(side=tk.LEFT)
+
+        ttk.Label(yctrl, text="Y max:").pack(side=tk.LEFT, padx=(6, 2))
+        self.yMaxVar = tk.StringVar(value="1")
+        self.yMaxEntry = ttk.Entry(yctrl, width=7, textvariable=self.yMaxVar, state="disabled")
+        self.yMaxEntry.pack(side=tk.LEFT)
+
+        # Manual valve buttons
+        valve_f = ttk.Frame(main, padding=(20, 0))
+        valve_f.pack(side=tk.RIGHT, anchor="ne")
 
         self.valves = Valves()
-        self.valveA_on = False
-        self.valveB_on = False
 
-        self.buttonA = tk.Button(valve_frame, text="Open A", width=10, bg="#D3D3D3", command=self.toggleValveA)
-        self.buttonA.pack(side=tk.TOP, pady=(0, 5))
+        self.buttonA = tk.Button(valve_f, text="Open A", width=10, bg=self.CLOSED_CLR, command=self.toggleValveA)
+        self.buttonA.pack(pady=(0, 5))
 
-        self.buttonB = tk.Button(valve_frame, text="Open B", width=10, bg="#D3D3D3", command=self.toggleValveB)
-        self.buttonB.pack(side=tk.TOP)
+        self.buttonB = tk.Button(valve_f, text="Open B", width=10, bg=self.CLOSED_CLR, command=self.toggleValveB)
+        self.buttonB.pack()
 
-        # Matplotlib graph
+        # Matplotlib figure
         self.fig, self.ax = plt.subplots(figsize=(6, 4))
         self.ax.set_xlabel("Time (s)")
         self.ax.set_ylabel("Signal (V)")
+
         self.line, = self.ax.plot([], [], lw=1.3)
 
-        self.canvas = FigureCanvasTkAgg(self.fig, master=root)
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        FigureCanvasTkAgg(self.fig, master=self.root).get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Data containers
         self.xData = []
         self.yData = []
 
-        # Schedule first GUI update
-        self.jobId = self.root.after(self.UPDATE_MS, self.updateLoop)
+    # Helper to build each schedule row
+    def _build_schedule_row(self, parent, row: int, start_label: str, time_label: str, prefix: str):
+        frm = ttk.Frame(parent)
+        frm.grid(row=row, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
-        # Close handler
-        self.root.protocol("WM_DELETE_WINDOW", self.closeWindow)
+        col0 = ttk.Frame(frm)
+        col0.grid(row=0, column=0, sticky="w")
+        ttk.Label(col0, text=start_label).pack(anchor="w")
 
-    def toggleRecording(self) -> None:
-        # toggles acquisition on/off
-        self.recording = not self.recording
+        setattr(self, f"startValveVar{prefix}", tk.StringVar(value="A"))
+        for v in ("A", "B"):
+            ttk.Radiobutton(
+                col0,
+                text=f"Valve {v}",
+                value=v,
+                variable=getattr(self, f"startValveVar{prefix}"),
+                command=self._updateScheduleLabels,
+            ).pack(anchor="w")
 
-        # write immediately when stopping
-        if not self.recording:
-            self.writeDataToFile()
+        col1 = ttk.Frame(frm)
+        col1.grid(row=0, column=1, padx=(25, 0), sticky="w")
+        ttk.Label(col1, text=time_label).pack(anchor="w")
 
-    def toggleValveA(self) -> None:
-        self.valveA_on = not self.valveA_on
-        if self.valveA_on:
+        setattr(self, f"swapTimeVar{prefix}", tk.StringVar(value="15"))
+        ent = ttk.Entry(col1, width=7, textvariable=getattr(self, f"swapTimeVar{prefix}"))
+        ent.pack(anchor="w")
+        ent.bind("<FocusOut>", lambda *_: self._updateScheduleLabels())
+        ent.bind("<Return>", lambda *_: self._updateScheduleLabels())
+
+        col2 = ttk.Frame(frm)
+        col2.grid(row=0, column=2, padx=(25, 0), sticky="w")
+        summary_var = tk.StringVar()
+        ttk.Label(col2, textvariable=summary_var).pack(anchor="w")
+        setattr(self, f"scheduleDispVar{prefix}", summary_var)
+
+    # Update summary labels without mutating entry text
+    def _updateScheduleLabels(self):
+        init_v = self.startValveVar1.get()
+        target_v = "B" if init_v == "A" else "A"
+        t1 = self._safe_float(self.swapTimeVar1, 0.0)
+        self.scheduleDispVar1.set(
+            f"Initial valve: {init_v} | Target valve: {target_v} in {int(t1)} seconds"
+        )
+
+        target_v2 = self.startValveVar2.get()
+        t2 = self._safe_float(self.swapTimeVar2, 0.0)
+        self.scheduleDispVar2.set(
+            f"Target valve: {target_v2} in {int(t2)} seconds"
+        )
+
+    # ──────────────────────────────────────────────────────────
+    #  Auto-run methods
+    # ──────────────────────────────────────────────────────────
+    def _toggle_auto_run(self):
+        settings.auto_run = self.autoRunVar.get()
+        if settings.auto_run:
+            # Update settings from GUI
+            try:
+                settings.auto_run_interval = int(self.autoIntVar.get())
+            except ValueError:
+                pass  # Keep previous value
+            self._start_auto_run_scheduler()
+        elif self.auto_run_job:
+            self.root.after_cancel(self.auto_run_job)
+            self.auto_run_job = None
+            self.next_run_time = None
+            self.nextRunVar.set("Next run: --:--:--")
+
+    def _calculate_next_run(self):
+        """Calculate next run time at exact minute interval."""
+        now = datetime.now()
+        interval_minutes = settings.auto_run_interval
+
+        # Calculate next minute that is multiple of interval
+        current_minute = now.minute
+        remainder = current_minute % interval_minutes
+        if remainder == 0:
+            # Already at interval, run at next interval
+            next_minute = interval_minutes
+        else:
+            next_minute = (current_minute // interval_minutes + 1) * interval_minutes
+
+        # Handle hour rollover
+        if next_minute >= 60:
+            next_minute = next_minute % 60
+            next_hour = now.hour + 1
+            if next_hour >= 24:
+                next_hour = 0
+        else:
+            next_hour = now.hour
+
+        # Create next run time at :00 seconds
+        next_run = now.replace(hour=next_hour, minute=next_minute, second=0, microsecond=0)
+
+        # If we're already past this time, add interval
+        if next_run < now:
+            next_run = next_run + timedelta(minutes=interval_minutes)
+
+        return next_run
+
+    def _start_auto_run_scheduler(self):
+        if not settings.auto_run:
+            return
+
+        # Calculate next run time
+        self.next_run_time = self._calculate_next_run()
+        self.nextRunVar.set(f"Next run: {self.next_run_time.strftime('%H:%M:%S')}")
+
+        # Calculate delay in milliseconds
+        now = datetime.now()
+        delay_ms = int((self.next_run_time - now).total_seconds() * 1000)
+
+        # Schedule next run
+        if self.auto_run_job:
+            self.root.after_cancel(self.auto_run_job)
+        self.auto_run_job = self.root.after(delay_ms, self._execute_auto_run)
+
+    def _execute_auto_run(self):
+        if not settings.auto_run:
+            return
+
+        # Start recording
+        self.startRecording()
+
+        # Schedule next run after current run completes
+        self.auto_run_job = self.root.after(
+            int(self.maxDuration * 1000) + 1000,  # Add buffer time
+            self._start_auto_run_scheduler
+        )
+
+    # ──────────────────────────────────────────────────────────
+    #  Valve helpers
+    # ──────────────────────────────────────────────────────────
+    def _setValveState(self, valve: str):
+        if valve == "A":
             self.valves.set_valve_position_a()
-            self.buttonA.config(bg="#90EE90")
-            self.valveB_on = False
-            self.buttonB.config(bg="#D3D3D3")
+            self.buttonA.config(bg=self.OPEN_CLR)
+            self.buttonB.config(bg=self.CLOSED_CLR)
         else:
-            self.buttonA.config(bg="#D3D3D3")
-
-    def toggleValveB(self) -> None:
-        self.valveB_on = not self.valveB_on
-        if self.valveB_on:
             self.valves.set_valve_position_b()
-            self.buttonB.config(bg="#90EE90")
-            self.valveA_on = False
-            self.buttonA.config(bg="#D3D3D3")
-        else:
-            self.buttonB.config(bg="#D3D3D3")
+            self.buttonB.config(bg=self.OPEN_CLR)
+            self.buttonA.config(bg=self.CLOSED_CLR)
 
-    def updateLoop(self) -> None:
+        self.currentValve = valve
+
+    def _autoSwap1(self):
+        self._setValveState("B" if self.currentValve == "A" else "A")
+        self.swapJobId1 = None
+
+    def _autoSwap2(self):
+        self._setValveState(self.startValveVar2.get())
+        self.swapJobId2 = None
+
+    # ──────────────────────────────────────────────────────────
+    #  Autoscale toggle
+    # ──────────────────────────────────────────────────────────
+    def _toggleAutoscale(self):
+        state = "disabled" if self.autoscaleVar.get() else "normal"
+        self.yMinEntry.config(state=state)
+        self.yMaxEntry.config(state=state)
+
+    # ──────────────────────────────────────────────────────────
+    #  Start / Stop
+    # ──────────────────────────────────────────────────────────
+    def startRecording(self):
         if self.recording:
-            if not self.daq.is_logging():
-                elapsed = time.perf_counter() - self.startTime
+            return
 
-                if elapsed >= self.maxDuration:
-                    self.recording = False
-                    self.writeDataToFile()
-                    return  # stop scheduling further updates
+        self.maxDuration = max(0.1, self._safe_float(self.durationVar, 30.0))
 
-                try:
-                    signal = self.daq.getSignalData()
-                except Exception as exc:
-                    print("Error reading signal:", exc)
-                    signal = None
+        self.currentValve = self.startValveVar1.get()
+        self.swap1Time = max(0.0, self._safe_float(self.swapTimeVar1, 0.0))
+        self.swap2Time = max(0.0, self._safe_float(self.swapTimeVar2, 0.0))
 
-                if signal is not None:
-                    remaining = max(0.0, self.maxDuration - elapsed)  # calculate time remaining
+        self._setValveState(self.currentValve)
 
-                    self.xData.append(elapsed)
-                    self.yData.append(signal)
+        if self.swap1Time > 0:
+            self.swapJobId1 = self.root.after(int(self.swap1Time * 1000), self._autoSwap1)
 
-                    self.timeVar.set(f"{elapsed:.4f}")
-                    self.remainingVar.set(f"{remaining:.4f}")  # update time remaining display
-                    self.signalVar.set(f"{signal:.4f}")
+        if self.swap2Time > 0:
+            self.swapJobId2 = self.root.after(int(self.swap2Time * 1000), self._autoSwap2)
 
-                    self.line.set_data(self.xData, self.yData)
-                    self.ax.relim()
-                    self.ax.autoscale_view()
-                    self.canvas.draw_idle()
+        self.xData.clear()
+        self.yData.clear()
+        self.line.set_data([], [])
 
-            # reschedule next refresh
-            self.jobId = self.root.after(self.UPDATE_MS, self.updateLoop)
+        self.startTime = time.perf_counter()
+        self.recording = True
+        self.daq.start()
 
-    def writeDataToFile(self) -> None:
-        self.daq.stop_logging()
+        self.startBtn.config(state="disabled")
+        self.stopBtn.config(state="normal")
 
-        if not self.xData:
-            return # nothing to save
+    def stopRecording(self):
+        if not self.recording:
+            return
 
-        initials = self.initialsVar.get().strip().upper() or "NULL"
-        self.daq.operatorInitials = initials
+        self.recording = False
+        self.daq.stop()
 
-        self.daq.data = list(zip(self.xData, self.yData))
-        try:
-            self.daq.writeData(self.daq.data)
-            print("Data written to disk.")
-        except Exception as exc:
-            messagebox.showerror("Write Error", f"Could not write data file:\n{exc}")
+        for jid in (self.swapJobId1, self.swapJobId2):
+            if jid:
+                self.root.after_cancel(jid)
 
-    def closeWindow(self) -> None:
-        # cancel scheduled callback
-        if self.jobId is not None:
-            self.root.after_cancel(self.jobId)
-            self.jobId = None
+        self.swapJobId1 = None
+        self.swapJobId2 = None
 
-        # always attempt to save any collected data
+        self.startBtn.config(state="normal")
+        self.stopBtn.config(state="disabled")
+
+    # ──────────────────────────────────────────────────────────
+    #  Main update loop
+    # ──────────────────────────────────────────────────────────
+    def updateLoop(self):
+        while not self.dataQueue.empty():
+            t_rel, v = self.dataQueue.get_nowait()
+            self.xData.append(t_rel)
+            self.yData.append(v)
+
         if self.xData:
-            self.writeDataToFile()
+            elapsed = self.xData[-1]
+            remaining = max(0.0, self.maxDuration - elapsed)
+
+            self.timeVar.set(f"{elapsed:.4f}")
+            self.remainingVar.set(f"{remaining:.4f}")
+            self.signalVar.set(f"{self.yData[-1]:.4f}")
+
+            self.line.set_data(self.xData, self.yData)
+
+            xmin = self.xData[0]
+            xmax = self.xData[-1]
+            pad_x = max(1e-6, (xmax - xmin) * 0.02)
+            self.ax.set_xlim(xmin - pad_x, xmax + pad_x)
+
+            if self.autoscaleVar.get():
+                ymin = min(self.yData)
+                ymax = max(self.yData)
+                pad_y = max(1e-6, (ymax - ymin) * 0.05)
+                self.ax.set_ylim(ymin - pad_y, ymax + pad_y)
+            else:
+                lims = self._manualYLimits()
+                if lims:
+                    self.ax.set_ylim(lims)
+
+            self.fig.canvas.draw_idle()
+
+            if self.recording and elapsed >= self.maxDuration:
+                if self.swapJobId2 and self.swap2Time >= self.maxDuration:
+                    self._autoSwap2()
+                self.stopRecording()
+
+        self.jobId = self.root.after(self.blockMS, self.updateLoop)
+
+    # ──────────────────────────────────────────────────────────
+    #  Utility helpers
+    # ──────────────────────────────────────────────────────────
+    def _manualYLimits(self):
+        try:
+            ymin = float(self.yMinVar.get())
+            ymax = float(self.yMaxVar.get())
+            if ymin >= ymax:
+                raise ValueError
+            return ymin, ymax
+        except ValueError:
+            return None
+
+    def _safe_float(self, tk_var: tk.StringVar, default: float) -> float:
+        try:
+            return float(tk_var.get())
+        except ValueError:
+            return default
+
+    # Manual override buttons
+    def toggleValveA(self):
+        self._setValveState("A")
+
+    def toggleValveB(self):
+        self._setValveState("B")
+
+    # Clean shutdown
+    def closeWindow(self):
+        if self.recording:
+            self.stopRecording()
+
+        if self.jobId:
+            self.root.after_cancel(self.jobId)
+
+        for jid in (self.swapJobId1, self.swapJobId2):
+            if jid:
+                self.root.after_cancel(jid)
+
+        if self.auto_run_job:
+            self.root.after_cancel(self.auto_run_job)
 
         self.root.destroy()
 
+
+# Stand-alone entry point
 def main():
     root = tk.Tk()
     Display(root)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()

@@ -1,119 +1,103 @@
+import numpy as np
 from mcculw import ul
 from mcculw.enums import ULRange
 from mcculw.ul import ULError
-from mcculw.device_info import DaqDeviceInfo
-
-import time
-import threading
+import ctypes as ct
+import threading, queue, time
 from datetime import datetime
 
-class DataAcquisition:
 
-    SAMPLING_RATE_HZ = 10000 # 10 kHz target
+class DataAcquisition:
+    blockSize = 100
+    samplingFrequency = 10_000  # Hz
 
     def __init__(self):
-        # board number: found in InstaCal
+        # Board-specific settings (unchanged)
         self.board_num = 0
+        self.channel   = 0
+        self.ai_range  = ULRange.BIP20VOLTS
 
-        # channel/range: see ports in MCCDAQ manual
-        self.channel = 0
-        self.ai_range = ULRange.BIP20VOLTS  # "ai" = analog input
+        # Pre-allocate one-block buffer
+        self._buf = (ct.c_uint16 * self.blockSize)()
 
-        # sampling rate config
-        self._logging      = False
-        self._log_thread   = None
-        self._log_lock     = threading.Lock()
+        # Run bookkeeping
+        self.data: list[tuple[float, float]] = []
+        self.operatorInitials: str = "NULL"
 
-        self.data = []
-        self.startTime = time.perf_counter()
+        # Threading helpers
+        self._queue:   queue.Queue | None = None
+        self._thread:  threading.Thread | None = None
+        self._running = threading.Event()
 
-        self.operatorInitials = "NULL"
+    # Public control surface
+    def attach_queue(self, q: queue.Queue) -> None:
+        """GUI supplies a queue to receive (t_rel, volts)."""
+        self._queue = q
 
-    def mainLoop(self) -> None:
-        self.startTime = time.perf_counter()
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._running.set()
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
 
-        # todo: make it run for x amount of time
-        #while (1 == 1):
-        for i in range(1):
-            signalValue = self.getSignalData()
-            timeValue = self.getTimeData(self.startTime)
-            self.recordData(timeValue, signalValue)
+    def stop(self, join_timeout: float = 1.0) -> None:
+        self._running.clear()
+        if self._thread:
+            self._thread.join(timeout=join_timeout)
+            self._thread = None
+        self.writeData(self.data)   # auto-save
+        self.data = []              # clear for next run
 
-        self.writeData(self.data)
+    # Background worker — runs in its own thread
+    def _worker(self) -> None:
+        t0 = time.perf_counter()
+        while self._running.is_set():
+            volts = self.getSignalData()
+            if volts is None:
+                continue            # skip bad scan, keep running
 
+            t_rel = time.perf_counter() - t0
+            epoch1904 = self.getTimeData()
+            self.recordData(epoch1904, volts)
 
-    def getSignalData(self) -> (float | None):
+            if self._queue:
+                try:
+                    self._queue.put_nowait((t_rel, volts))
+                except queue.Full:      # drop oldest if GUI lags
+                    _ = self._queue.get_nowait()
+                    self._queue.put_nowait((t_rel, volts))
+            # a_in_scan blocks ≈ blockSize/samplingFrequency
+            # so no extra sleep is needed
+
+    # Low-level helpers (original logic kept intact)
+    def getSignalData(self) -> float | None:
         try:
-            # GETS SIGNAL VALUE (in voltage)
-            # Get a value from the device
-            value = ul.a_in(self.board_num, self.channel, self.ai_range)
-            # Convert the raw value to normal units
-            units_value = ul.to_eng_units(self.board_num, self.ai_range, value)
+            ul.a_in_scan(self.board_num,
+                         self.channel, self.channel,
+                         self.blockSize, self.samplingFrequency,
+                         self.ai_range, self._buf, 0)
 
-            return units_value
-
-        except ULError as e:  # Display the error (if needed)
-            print("A UL error occurred. Code: " + str(e.errorcode) + " Message: " + e.message)
-
+            counts = np.ctypeslib.as_array(self._buf).mean()
+            return float(ul.to_eng_units(self.board_num, self.ai_range, int(counts)))
+        except ULError as e:
+            print("UL error:", e.errorcode, e.message)
             return None
 
-    def getTimeData(self, startTime) -> float:
-        currentTime = time.perf_counter()
-        timeElapsed = currentTime - startTime
+    def getTimeData(self) -> float:
+        return (datetime.now() - datetime(1904, 1, 1)).total_seconds()
 
-        return timeElapsed
+    def recordData(self, epoch1904: float, volts: float) -> None:
+        self.data.append((epoch1904, volts))
 
-    def recordData(self, time: float, signal: float) -> None:
-        self.data.append([time, signal])
-
-    def writeData(self, data: list) -> None:
-
-        fullFilename = self.operatorInitials.upper() + "_" + self.getSystemTime() # no file extension name
-        dataFile = open(fullFilename, "w")
-
-        # Data formatting and writes to file
-        # TO FORMAT: [TIME] <TAB> [SIGNAL] <NEW LINE>
-        for i in range(len(data)):
-            time_i = self.data[i][0]
-            signal_i = self.data[i][1]
-
-            message = f"{time_i:.4f}\t{signal_i:.4f}\n"
-            dataFile.write(message)
-
-        dataFile.close()
-
-    def getSystemTime(self) -> str:
-        now = datetime.now()
-        formatted = now.strftime("%y%m%d_%H%M%S")
-
-        return formatted
-
-    def _log_loop(self, duration_s: float):
-        interval   = 1.0 / self.SAMPLING_RATE_HZ
-        start      = time.perf_counter()
-        next_tick  = start
-        while self._logging and time.perf_counter() - start < duration_s:
-            t_rel   = time.perf_counter() - start
-            value   = self.getSignalData()
-            with self._log_lock:
-                self.data.append((t_rel, value))
-            next_tick += interval
-            time.sleep(max(0.0, next_tick - time.perf_counter()))
-        self._logging = False           # finishes automatically
-
-    def start_logging(self, duration_s: float):
-        if self._logging:      # already running
+    # File I/O (pattern unchanged)
+    def writeData(self, data: list[tuple[float, float]]) -> None:
+        if not data:
             return
-        self.data     = []     # clear previous run
-        self._logging = True
-        self._log_thread = threading.Thread(
-            target=self._log_loop, args=(duration_s,), daemon=True)
-        self._log_thread.start()
-
-    def stop_logging(self):
-        self._logging = False
-        if self._log_thread:
-            self._log_thread.join()
-
-    def is_logging(self) -> bool:       # helper for GUI
-        return self._logging
+        stamp    = datetime.now().strftime("%y%m%d_%H%M%S")
+        initials = (self.operatorInitials or "NULL").upper()
+        fname    = f"{initials}_{stamp}"
+        with open(fname, "w", encoding="utf-8") as f:
+            for epoch, v in data:
+                f.write(f"{epoch:.4f}\t{v:.4f}\n")
+        print(f"Saved {len(data)} rows to {fname}")
