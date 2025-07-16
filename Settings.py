@@ -1,17 +1,4 @@
 from __future__ import annotations
-
-"""User‑friendly, GUI‑ready runtime settings for the GC‑DAQ app.
-
-🔧 **How to use (non‑coders welcome!)**
---------------------------------------------------
-1. Open *this* file.
-2. Change the numbers or text after the `=` signs to what you need.
-3. Save – the rest of the program picks the new values up automatically.
-
-A future settings dialog can simply import this class and read / write the
-attributes directly. No JSON, INI, or command‑line flags are required.
-"""
-
 from dataclasses import dataclass, field
 from typing import Dict, Any
 
@@ -36,7 +23,7 @@ class Settings:
 
     # Auto-run parameters
     auto_run: bool = False  # Enable auto-run feature
-    auto_run_interval: int = 10  # Minutes between runs
+    auto_run_interval: int = 600  # Seconds between runs (default 10 minutes)
 
     # Helpers
     def validate(self) -> None:

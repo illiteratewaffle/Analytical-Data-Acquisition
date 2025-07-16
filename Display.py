@@ -150,10 +150,10 @@ class Display:
             command=self._toggle_auto_run
         ).pack(side=tk.LEFT)
 
-        # Interval
+        # Interval (now in seconds)
         self.autoIntVar = tk.StringVar(value=str(settings.auto_run_interval))
-        ttk.Entry(auto_run_f, width=3, textvariable=self.autoIntVar).pack(side=tk.LEFT)
-        ttk.Label(auto_run_f, text="minutes").pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Entry(auto_run_f, width=5, textvariable=self.autoIntVar).pack(side=tk.LEFT)
+        ttk.Label(auto_run_f, text="seconds").pack(side=tk.LEFT, padx=(0, 2))
 
         # Next run display
         self.nextRunVar = tk.StringVar(value="Next run: --:--:--")
@@ -274,34 +274,31 @@ class Display:
             self.nextRunVar.set("Next run: --:--:--")
 
     def _calculate_next_run(self):
-        """Calculate next run time at exact minute interval."""
+        """Calculate next run time at exact second interval."""
         now = datetime.now()
-        interval_minutes = settings.auto_run_interval
+        interval_seconds = settings.auto_run_interval
 
-        # Calculate next minute that is multiple of interval
-        current_minute = now.minute
-        remainder = current_minute % interval_minutes
+        # Calculate next time that is multiple of interval seconds
+        current_seconds = now.hour * 3600 + now.minute * 60 + now.second
+        remainder = current_seconds % interval_seconds
+
         if remainder == 0:
-            # Already at interval, run at next interval
-            next_minute = interval_minutes
+            # Already at interval, run immediately
+            next_seconds = current_seconds
         else:
-            next_minute = (current_minute // interval_minutes + 1) * interval_minutes
+            next_seconds = current_seconds + interval_seconds - remainder
 
-        # Handle hour rollover
-        if next_minute >= 60:
-            next_minute = next_minute % 60
-            next_hour = now.hour + 1
-            if next_hour >= 24:
-                next_hour = 0
-        else:
-            next_hour = now.hour
+        # Convert seconds back to time
+        next_hour = next_seconds // 3600
+        next_minute = (next_seconds % 3600) // 60
+        next_second = next_seconds % 60
 
-        # Create next run time at :00 seconds
-        next_run = now.replace(hour=next_hour, minute=next_minute, second=0, microsecond=0)
+        # Create next run time
+        next_run = now.replace(hour=next_hour, minute=next_minute, second=next_second, microsecond=0)
 
-        # If we're already past this time, add interval
-        if next_run < now:
-            next_run = next_run + timedelta(minutes=interval_minutes)
+        # Handle day rollover
+        if next_hour >= 24:
+            next_run = next_run + timedelta(days=1)
 
         return next_run
 
