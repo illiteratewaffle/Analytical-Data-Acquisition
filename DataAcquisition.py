@@ -95,7 +95,7 @@ class DataAcquisition:
         if not data:
             return
         stamp    = datetime.now().strftime("%y%m%d_%H%M%S")
-        initials = (self.operatorInitials or "NULL").upper()
+        initials = self.operatorInitials.upper()
         fname    = f"{initials}_{stamp}"
         with open(fname, "w", encoding="utf-8") as f:
             for epoch, v in data:
