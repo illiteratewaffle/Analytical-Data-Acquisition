@@ -25,10 +25,16 @@ class DataAcquisition:
         # Run bookkeeping
         self.data: list[tuple[float, float]] = []
 
+        # initial file name
+        self.filename = None
+
         # Threading helpers
         self._queue: queue.Queue | None = None
         self._thread: threading.Thread | None = None
         self._running = threading.Event()
+
+    def set_filename(self, filename):
+        self.filename = filename
 
     # Public control surface
     def attach_queue(self, q: queue.Queue) -> None:
@@ -91,17 +97,12 @@ class DataAcquisition:
     def recordData(self, epoch1904: float, volts: float) -> None:
         self.data.append((epoch1904, volts))
 
-    # File I/O (pattern unchanged)
+    # File I/O
     def writeData(self, data: list[tuple[float, float]]) -> None:
-        if not data:
+        if not data or not self.filename:  # MODIFIED: Check filename
             return
 
-        # Use operator initials from settings
-        initials = settings.operator_initials.upper() or "NULL"
-        stamp = datetime.now().strftime("%y%m%d_%H%M%S")
-        fname = f"{initials}_{stamp}.txt"
-
-        with open(fname, "w", encoding="utf-8") as f:
+        with open(self.filename, "w", encoding="utf-8") as f:
             for epoch, v in data:
                 f.write(f"{epoch:.4f}\t{v:.4f}\n")
-        print(f"Saved {len(data)} rows to {fname}")
+        print(f"Saved {len(data)} rows to {self.filename}")

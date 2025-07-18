@@ -80,6 +80,11 @@ class Display:
         self.stopBtn = ttk.Button(top, text="Stop", command=self.stopRecording, state="disabled")
         self.stopBtn.grid(row=0, column=3)
 
+        ttk.Label(top, text="File:").grid(row=0, column=4, padx=(10, 2))
+        self.filenameVar = tk.StringVar(value="")
+        self.filenameLabel = ttk.Label(top, textvariable=self.filenameVar, foreground="blue")
+        self.filenameLabel.grid(row=0, column=5, sticky="w")
+
         ttk.Separator(self.root, orient="horizontal").pack(fill=tk.X, pady=4)
 
         # Main frame
@@ -438,6 +443,17 @@ class Display:
         # Set operator initials from GUI
         settings.operator_initials = self.initialsVar.get().strip() or "NULL"
 
+        # Generate filename for this run
+        initials = settings.operator_initials.upper()
+        stamp = datetime.now().strftime("%y%m%d_%H%M%S")
+        self.current_filename = f"{initials}_{stamp}"
+
+        # Show filename in UI
+        self.filenameVar.set(self.current_filename)
+
+        # Set filename in DAQ
+        self.daq.set_filename(self.current_filename)
+
         # Use effective duration (with 5s buffer)
         self.maxDuration = settings.effective_run_duration
 
@@ -487,6 +503,9 @@ class Display:
 
         self.startBtn.config(state="normal")
         self.stopBtn.config(state="disabled")
+
+        # Clear filename after short delay to show it was saved
+        self.root.after(2000, lambda: self.filenameVar.set(""))
 
     # ──────────────────────────────────────────────────────────
     #  Main update loop
