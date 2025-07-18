@@ -6,6 +6,8 @@ import ctypes as ct
 import threading, queue, time
 from datetime import datetime
 
+from Settings import settings
+
 
 class DataAcquisition:
     blockSize = 100
@@ -14,19 +16,18 @@ class DataAcquisition:
     def __init__(self):
         # Board-specific settings (unchanged)
         self.board_num = 0
-        self.channel   = 0
-        self.ai_range  = ULRange.BIP20VOLTS
+        self.channel = 0
+        self.ai_range = ULRange.BIP20VOLTS
 
         # Pre-allocate one-block buffer
         self._buf = (ct.c_uint16 * self.blockSize)()
 
         # Run bookkeeping
         self.data: list[tuple[float, float]] = []
-        self.operatorInitials: str = "NULL"
 
         # Threading helpers
-        self._queue:   queue.Queue | None = None
-        self._thread:  threading.Thread | None = None
+        self._queue: queue.Queue | None = None
+        self._thread: threading.Thread | None = None
         self._running = threading.Event()
 
     # Public control surface
@@ -46,8 +47,8 @@ class DataAcquisition:
         if self._thread:
             self._thread.join(timeout=join_timeout)
             self._thread = None
-        self.writeData(self.data)   # auto-save
-        self.data = []              # clear for next run
+        self.writeData(self.data)  # auto-save
+        self.data = []  # clear for next run
 
     # Background worker — runs in its own thread
     def _worker(self) -> None:
@@ -55,7 +56,7 @@ class DataAcquisition:
         while self._running.is_set():
             volts = self.getSignalData()
             if volts is None:
-                continue            # skip bad scan, keep running
+                continue  # skip bad scan, keep running
 
             t_rel = time.perf_counter() - t0
             epoch1904 = self.getTimeData()
@@ -64,7 +65,7 @@ class DataAcquisition:
             if self._queue:
                 try:
                     self._queue.put_nowait((t_rel, volts))
-                except queue.Full:      # drop oldest if GUI lags
+                except queue.Full:  # drop oldest if GUI lags
                     _ = self._queue.get_nowait()
                     self._queue.put_nowait((t_rel, volts))
             # a_in_scan blocks ≈ blockSize/samplingFrequency
@@ -94,9 +95,12 @@ class DataAcquisition:
     def writeData(self, data: list[tuple[float, float]]) -> None:
         if not data:
             return
-        stamp    = datetime.now().strftime("%y%m%d_%H%M%S")
-        initials = (self.operatorInitials or "NULL").upper()
-        fname    = f"{initials}_{stamp}"
+
+        # Use operator initials from settings
+        initials = settings.operator_initials.upper() or "NULL"
+        stamp = datetime.now().strftime("%y%m%d_%H%M%S")
+        fname = f"{initials}_{stamp}.txt"
+
         with open(fname, "w", encoding="utf-8") as f:
             for epoch, v in data:
                 f.write(f"{epoch:.4f}\t{v:.4f}\n")
