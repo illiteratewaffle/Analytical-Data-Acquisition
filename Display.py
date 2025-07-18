@@ -1,7 +1,7 @@
 import time
 import queue
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
 import math
 
@@ -17,7 +17,7 @@ from Settings import settings
 
 
 class Display:
-    """Real-time GUI with two valve-swap schedules, X/Y autoscaling, and auto-run."""
+    """Real-time GUI with variable valve-swap schedules, X/Y autoscaling, and auto-run."""
 
     OPEN_CLR = "#90EE90"
     CLOSED_CLR = "#D3D3D3"
@@ -40,12 +40,9 @@ class Display:
 
         # Run-state
         self.recording = False
-        self.maxDuration = 30.0
+        self.maxDuration = settings.effective_run_duration
         self.currentValve = "A"
-        self.swapJobId1 = None
-        self.swapJobId2 = None
-        self.swap1Time = 0.0
-        self.swap2Time = 0.0
+        self.swap_job_ids = []  # List to store all swap job IDs
 
         # Auto-run state
         self.auto_run_job = None
@@ -110,37 +107,68 @@ class Display:
         dur.grid(row=1, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         ttk.Label(dur, text="Run Duration (s):").pack(side=tk.LEFT, padx=(0, 2))
-        self.durationVar = tk.StringVar(value="30")
-        ttk.Entry(dur, width=7, textvariable=self.durationVar).pack(side=tk.LEFT)
+        self.durationVar = tk.StringVar(value=str(settings.run_duration))
+        self.durationEntry = ttk.Entry(dur, width=7, textvariable=self.durationVar)
+        self.durationEntry.pack(side=tk.LEFT)
+        self.durationEntry.bind("<FocusOut>", self._update_duration)
+        self.durationEntry.bind("<Return>", self._update_duration)
 
         ttk.Label(dur, text="Presets:").pack(side=tk.LEFT, padx=(10, 2))
-        ttk.Button(dur, text="2 min", width=7, command=lambda: self.durationVar.set(str(2 * 60))).pack(side=tk.LEFT)
-        ttk.Button(dur, text="5 min", width=7, command=lambda: self.durationVar.set(str(5 * 60))).pack(side=tk.LEFT,
-                                                                                                       padx=2)
-        ttk.Button(dur, text="10 min", width=7, command=lambda: self.durationVar.set(str(10 * 60))).pack(side=tk.LEFT)
+        preset_btns = [
+            ("2 min", 120),
+            ("5 min", 300),
+            ("10 min", 600)
+        ]
+        for text, sec in preset_btns:
+            ttk.Button(
+                dur,
+                text=text,
+                width=7,
+                command=lambda s=sec: self._set_duration(s)
+            ).pack(side=tk.LEFT, padx=(0, 2))
 
-        # Valve-swap rows
-        self._build_schedule_row(
-            info,
-            row=2,
-            start_label="Swap #1 – initial valve:",
-            time_label="Swap #1 in (s):",
-            prefix="1",
-        )
+        # Valve schedule controls
+        valve_schedule_frm = ttk.LabelFrame(info, text="Valve Schedule")
+        valve_schedule_frm.grid(row=2, column=0, columnspan=6, sticky="we", pady=(10, 5), padx=5)
 
-        self._build_schedule_row(
-            info,
-            row=3,
-            start_label="Swap #2 – target valve:",
-            time_label="Swap #2 in (s):",
-            prefix="2",
-        )
+        # Initial valve
+        initial_frm = ttk.Frame(valve_schedule_frm)
+        initial_frm.pack(fill=tk.X, padx=5, pady=(5, 0))
+        ttk.Label(initial_frm, text="Initial Valve:").pack(side=tk.LEFT, padx=(0, 5))
+        self.initialValveVar = tk.StringVar(value="A")
+        ttk.Radiobutton(initial_frm, text="A", variable=self.initialValveVar, value="A").pack(side=tk.LEFT)
+        ttk.Radiobutton(initial_frm, text="B", variable=self.initialValveVar, value="B").pack(side=tk.LEFT)
 
-        self._updateScheduleLabels()
+        # Valve swap table
+        swap_frm = ttk.Frame(valve_schedule_frm)
+        swap_frm.pack(fill=tk.X, padx=5, pady=5)
+
+        # Table header
+        header = ttk.Frame(swap_frm)
+        header.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(header, text="Swap #", width=8).pack(side=tk.LEFT)
+        ttk.Label(header, text="Time (s)", width=8).pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="Valve", width=8).pack(side=tk.LEFT, padx=5)
+        ttk.Label(header, text="Action", width=8).pack(side=tk.LEFT)
+
+        # Container for swap rows
+        self.swap_rows_frame = ttk.Frame(swap_frm)
+        self.swap_rows_frame.pack(fill=tk.X)
+
+        # Add/remove controls
+        ctrl_frm = ttk.Frame(valve_schedule_frm)
+        ctrl_frm.pack(fill=tk.X, padx=5, pady=(0, 5))
+        ttk.Button(ctrl_frm, text="+ Add Swap", command=self._add_swap_row).pack(side=tk.LEFT)
+        ttk.Button(ctrl_frm, text="- Remove Last", command=self._remove_last_swap).pack(side=tk.LEFT, padx=5)
+
+        # Populate with existing schedule
+        self.swap_vars = []
+        for time, valve in settings.valve_schedule:
+            self._add_swap_row(time, valve)
 
         # Auto-run row
         auto_run_f = ttk.Frame(info)
-        auto_run_f.grid(row=4, column=0, columnspan=6, sticky="w", pady=(10, 0))
+        auto_run_f.grid(row=3, column=0, columnspan=6, sticky="w", pady=(10, 0))
 
         self.autoRunVar = tk.BooleanVar(value=settings.auto_run)
         ttk.Checkbutton(
@@ -150,9 +178,13 @@ class Display:
             command=self._toggle_auto_run
         ).pack(side=tk.LEFT)
 
-        # Interval (now in seconds)
+        # Interval entry
         self.autoIntVar = tk.StringVar(value=str(settings.auto_run_interval))
-        ttk.Entry(auto_run_f, width=5, textvariable=self.autoIntVar).pack(side=tk.LEFT)
+        self.autoIntEntry = ttk.Entry(auto_run_f, width=5, textvariable=self.autoIntVar)
+        self.autoIntEntry.pack(side=tk.LEFT)
+        self.autoIntEntry.bind("<FocusOut>", self._update_auto_interval)
+        self.autoIntEntry.bind("<Return>", self._update_auto_interval)
+
         ttk.Label(auto_run_f, text="seconds").pack(side=tk.LEFT, padx=(0, 2))
 
         # Next run display
@@ -161,7 +193,7 @@ class Display:
 
         # Y-axis controls
         yctrl = ttk.Frame(info)
-        yctrl.grid(row=5, column=0, columnspan=6, sticky="w", pady=(6, 0))
+        yctrl.grid(row=4, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         self.autoscaleVar = tk.BooleanVar(value=True)
         ttk.Checkbutton(
@@ -205,55 +237,96 @@ class Display:
         self.xData = []
         self.yData = []
 
-    # Helper to build each schedule row
-    def _build_schedule_row(self, parent, row: int, start_label: str, time_label: str, prefix: str):
-        frm = ttk.Frame(parent)
-        frm.grid(row=row, column=0, columnspan=6, sticky="w", pady=(6, 0))
+    # ──────────────────────────────────────────────────────────
+    #  Valve schedule management
+    # ──────────────────────────────────────────────────────────
+    def _add_swap_row(self, time_val: float = 0.0, valve_val: str = "B"):
+        """Add a new row to the valve schedule table"""
+        row = ttk.Frame(self.swap_rows_frame)
+        row.pack(fill=tk.X, pady=2)
 
-        col0 = ttk.Frame(frm)
-        col0.grid(row=0, column=0, sticky="w")
-        ttk.Label(col0, text=start_label).pack(anchor="w")
+        # Swap number
+        swap_num = len(self.swap_vars) + 1
+        ttk.Label(row, text=f"#{swap_num}", width=8).pack(side=tk.LEFT)
 
-        setattr(self, f"startValveVar{prefix}", tk.StringVar(value="A"))
-        for v in ("A", "B"):
-            ttk.Radiobutton(
-                col0,
-                text=f"Valve {v}",
-                value=v,
-                variable=getattr(self, f"startValveVar{prefix}"),
-                command=self._updateScheduleLabels,
-            ).pack(anchor="w")
+        # Time entry
+        time_var = tk.StringVar(value=str(time_val))
+        time_ent = ttk.Entry(row, width=8, textvariable=time_var)
+        time_ent.pack(side=tk.LEFT, padx=5)
 
-        col1 = ttk.Frame(frm)
-        col1.grid(row=0, column=1, padx=(25, 0), sticky="w")
-        ttk.Label(col1, text=time_label).pack(anchor="w")
+        # Valve selection
+        valve_var = tk.StringVar(value=valve_val)
+        valve_cmb = ttk.Combobox(row, width=8, textvariable=valve_var, state="readonly")
+        valve_cmb['values'] = ("A", "B")
+        valve_cmb.pack(side=tk.LEFT, padx=5)
 
-        setattr(self, f"swapTimeVar{prefix}", tk.StringVar(value="15"))
-        ent = ttk.Entry(col1, width=7, textvariable=getattr(self, f"swapTimeVar{prefix}"))
-        ent.pack(anchor="w")
-        ent.bind("<FocusOut>", lambda *_: self._updateScheduleLabels())
-        ent.bind("<Return>", lambda *_: self._updateScheduleLabels())
+        # Remove button
+        remove_btn = ttk.Button(row, text="Remove", width=8,
+                                command=lambda r=row: self._remove_swap_row(r))
+        remove_btn.pack(side=tk.LEFT)
 
-        col2 = ttk.Frame(frm)
-        col2.grid(row=0, column=2, padx=(25, 0), sticky="w")
-        summary_var = tk.StringVar()
-        ttk.Label(col2, textvariable=summary_var).pack(anchor="w")
-        setattr(self, f"scheduleDispVar{prefix}", summary_var)
+        # Store variables
+        self.swap_vars.append((time_var, valve_var, row))
 
-    # Update summary labels without mutating entry text
-    def _updateScheduleLabels(self):
-        init_v = self.startValveVar1.get()
-        target_v = "B" if init_v == "A" else "A"
-        t1 = self._safe_float(self.swapTimeVar1, 0.0)
-        self.scheduleDispVar1.set(
-            f"Initial valve: {init_v} | Target valve: {target_v} in {int(t1)} seconds"
-        )
+    def _remove_swap_row(self, row):
+        """Remove a specific row from the valve schedule"""
+        # Find and remove the row from our list
+        for i, (time_var, valve_var, row_widget) in enumerate(self.swap_vars):
+            if row_widget == row:
+                self.swap_vars.pop(i)
+                row.destroy()
+                break
 
-        target_v2 = self.startValveVar2.get()
-        t2 = self._safe_float(self.swapTimeVar2, 0.0)
-        self.scheduleDispVar2.set(
-            f"Target valve: {target_v2} in {int(t2)} seconds"
-        )
+        # Renumber remaining swaps
+        for i, (_, _, row_widget) in enumerate(self.swap_vars):
+            swap_num_label = row_widget.winfo_children()[0]
+            swap_num_label.config(text=f"#{i + 1}")
+
+    def _remove_last_swap(self):
+        """Remove the last swap from the schedule"""
+        if self.swap_vars:
+            _, _, row = self.swap_vars.pop()
+            row.destroy()
+
+    def _get_valve_schedule(self) -> list[tuple[float, str]]:
+        """Get the current valve schedule from the UI"""
+        schedule = []
+        for time_var, valve_var, _ in self.swap_vars:
+            try:
+                time_val = float(time_var.get())
+                valve_val = valve_var.get()
+                if time_val >= 0 and valve_val in ("A", "B"):
+                    schedule.append((time_val, valve_val))
+                else:
+                    messagebox.showerror("Invalid Input",
+                                         f"Invalid valve schedule: time={time_val}, valve={valve_val}")
+            except ValueError:
+                messagebox.showerror("Invalid Input", "Time must be a number")
+        return sorted(schedule, key=lambda x: x[0])
+
+    # ──────────────────────────────────────────────────────────
+    #  Duration and interval synchronization
+    # ──────────────────────────────────────────────────────────
+    def _set_duration(self, seconds: float):
+        """Set duration without affecting auto-run interval"""
+        settings.run_duration = seconds
+        self.durationVar.set(str(seconds))
+
+    def _update_duration(self, event=None):
+        """Update from GUI entry"""
+        try:
+            seconds = float(self.durationVar.get())
+            settings.run_duration = seconds
+        except ValueError:
+            pass
+
+    def _update_auto_interval(self, event=None):
+        """Update auto-run interval from GUI"""
+        try:
+            interval = int(self.autoIntVar.get())
+            settings.auto_run_interval = interval
+        except ValueError:
+            pass
 
     # ──────────────────────────────────────────────────────────
     #  Auto-run methods
@@ -328,7 +401,7 @@ class Display:
 
         # Schedule next run after current run completes
         self.auto_run_job = self.root.after(
-            int(self.maxDuration * 1000) + 1000,  # Add buffer time
+            int(settings.auto_run_interval * 1000),  # Use full interval
             self._start_auto_run_scheduler
         )
 
@@ -347,14 +420,6 @@ class Display:
 
         self.currentValve = valve
 
-    def _autoSwap1(self):
-        self._setValveState("B" if self.currentValve == "A" else "A")
-        self.swapJobId1 = None
-
-    def _autoSwap2(self):
-        self._setValveState(self.startValveVar2.get())
-        self.swapJobId2 = None
-
     # ──────────────────────────────────────────────────────────
     #  Autoscale toggle
     # ──────────────────────────────────────────────────────────
@@ -370,19 +435,32 @@ class Display:
         if self.recording:
             return
 
-        self.maxDuration = max(0.1, self._safe_float(self.durationVar, 30.0))
+        # Set operator initials from GUI
+        settings.operator_initials = self.initialsVar.get().strip() or "NULL"
 
-        self.currentValve = self.startValveVar1.get()
-        self.swap1Time = max(0.0, self._safe_float(self.swapTimeVar1, 0.0))
-        self.swap2Time = max(0.0, self._safe_float(self.swapTimeVar2, 0.0))
+        # Use effective duration (with 5s buffer)
+        self.maxDuration = settings.effective_run_duration
 
+        # Get valve schedule from UI
+        settings.valve_schedule = self._get_valve_schedule()
+
+        # Set initial valve
+        self.currentValve = self.initialValveVar.get()
         self._setValveState(self.currentValve)
 
-        if self.swap1Time > 0:
-            self.swapJobId1 = self.root.after(int(self.swap1Time * 1000), self._autoSwap1)
+        # Clear any existing swap jobs
+        for job_id in self.swap_job_ids:
+            self.root.after_cancel(job_id)
+        self.swap_job_ids = []
 
-        if self.swap2Time > 0:
-            self.swapJobId2 = self.root.after(int(self.swap2Time * 1000), self._autoSwap2)
+        # Schedule all valve swaps
+        for swap_time, valve_target in settings.valve_schedule:
+            if swap_time > 0 and swap_time < self.maxDuration:
+                job_id = self.root.after(
+                    int(swap_time * 1000),
+                    lambda v=valve_target: self._setValveState(v)
+                )
+                self.swap_job_ids.append(job_id)
 
         self.xData.clear()
         self.yData.clear()
@@ -402,12 +480,10 @@ class Display:
         self.recording = False
         self.daq.stop()
 
-        for jid in (self.swapJobId1, self.swapJobId2):
-            if jid:
-                self.root.after_cancel(jid)
-
-        self.swapJobId1 = None
-        self.swapJobId2 = None
+        # Cancel all swap jobs
+        for job_id in self.swap_job_ids:
+            self.root.after_cancel(job_id)
+        self.swap_job_ids = []
 
         self.startBtn.config(state="normal")
         self.stopBtn.config(state="disabled")
@@ -449,8 +525,6 @@ class Display:
             self.fig.canvas.draw_idle()
 
             if self.recording and elapsed >= self.maxDuration:
-                if self.swapJobId2 and self.swap2Time >= self.maxDuration:
-                    self._autoSwap2()
                 self.stopRecording()
 
         self.jobId = self.root.after(self.blockMS, self.updateLoop)
@@ -489,9 +563,9 @@ class Display:
         if self.jobId:
             self.root.after_cancel(self.jobId)
 
-        for jid in (self.swapJobId1, self.swapJobId2):
-            if jid:
-                self.root.after_cancel(jid)
+        for job_id in self.swap_job_ids:
+            if job_id:
+                self.root.after_cancel(job_id)
 
         if self.auto_run_job:
             self.root.after_cancel(self.auto_run_job)

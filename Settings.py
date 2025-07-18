@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
 
 
 @dataclass
@@ -9,14 +9,7 @@ class Settings:
     channel: int = 0  # DAQ analog channel wired to detector
     sampling_frequency: int = 10_000  # Hz, e.g. 10_000 for 10 kHz
     block_size: int = 1_000  # samples grabbed per driver call
-    run_duration: float = 30.0  # seconds, total length of a run
-
-    # Valve timing map  { valve_name : seconds_from_start }
-    valve_schedule: Dict[str, float] = field(default_factory=lambda: {
-        # "ValveLabel" : time_in_seconds   (edit as needed)
-        "SampleInject": 0.0,  # open right at t = 0 s
-        "BackFlush": 15.0,  # swap after 15 seconds
-    })
+    run_duration: float = 595.0  # seconds, total length of a run (595 for 10 min interval)
 
     # Misc / operator info
     operator_initials: str = "NULL"  # appears in data‑file names
@@ -24,6 +17,17 @@ class Settings:
     # Auto-run parameters
     auto_run: bool = False  # Enable auto-run feature
     auto_run_interval: int = 600  # Seconds between runs (default 10 minutes)
+
+    # Valve scheduling - now a list of (time, valve) pairs
+    valve_schedule: List[Tuple[float, str]] = field(default_factory=lambda: [
+        (15.0, "B")  # Default: swap to B at 15s
+    ])
+
+    # Properties for synchronization
+    @property
+    def effective_run_duration(self) -> float:
+        """Run duration minus 5s buffer"""
+        return max(0, self.run_duration - 5.0)
 
     # Helpers
     def validate(self) -> None:
@@ -36,9 +40,11 @@ class Settings:
             raise ValueError("block_size must be positive")
         if self.run_duration <= 0:
             raise ValueError("run_duration must be positive")
-        for name, t in self.valve_schedule.items():
-            if t < 0:
-                raise ValueError(f"valve '{name}' time cannot be negative")
+        for time, valve in self.valve_schedule:
+            if time < 0:
+                raise ValueError(f"valve time cannot be negative")
+            if valve not in ("A", "B"):
+                raise ValueError(f"valve must be 'A' or 'B'")
         if self.auto_run_interval <= 0:
             raise ValueError("auto_run_interval must be positive")
 
@@ -50,10 +56,10 @@ class Settings:
             "sampling_frequency": self.sampling_frequency,
             "block_size": self.block_size,
             "run_duration": self.run_duration,
-            "valve_schedule": dict(self.valve_schedule),
             "operator_initials": self.operator_initials,
             "auto_run": self.auto_run,
             "auto_run_interval": self.auto_run_interval,
+            "valve_schedule": list(self.valve_schedule),
         }
 
     def __str__(self) -> str:
