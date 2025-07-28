@@ -13,7 +13,7 @@ Hardware: MCC DAQ board connected and configured with InstaCal
 
 1.2. Run the executable. Make sure to check the box “Add Python to PATH” during installation.
 
-![Python Installer Screenshot](assets/installPython.png)
+![Python Installer Screenshot](../assets/installPython.png)
 
 Figure 1. List of available Python installers. 32 bit version highlighted in yellow, 64 bit version highlighted in green.
 
@@ -41,7 +41,7 @@ Figure 1. List of available Python installers. 32 bit version highlighted in yel
 
 4.2. Press the green "<> Code" button and press Download ZIP (Figure 2).
 
-![GitHub download screenshot](assets/github_download.png)
+![GitHub download screenshot](../assets/github_download.png)
 
 Figure 2. Location of buttons for installation.
 
@@ -55,7 +55,7 @@ Figure 2. Location of buttons for installation.
 
 5.3. Click "Edit with IDLE" (Figure 3)
 
-![file location](assets/mainLocation.png)
+![file location](../assets/mainLocation.png)
 
 Figure 3.
 
@@ -63,6 +63,6 @@ Figure 3.
 
 5.5. In the menu, select "Run module". Alternatively press F5 (Figure 4)
 
-![Run location](assets/runImage.png)
+![Run location](../assets/runImage.png)
 
 Figure 4.
