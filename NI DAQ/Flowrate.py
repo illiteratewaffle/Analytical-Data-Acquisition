@@ -2,14 +2,24 @@ class MFC:
     def __init__(self, name, max_flow):
         self.name = name
         self.max_flow = max_flow
+        self.unit = "SLPM" if "SLPM" in name else "SCCM"
 
     def flow_to_voltage(self, flow_rate):
-        """Convert flow rate to voltage (0-5V scale)"""
-        return min(5.0, max(0.0, flow_rate / self.max_flow * 5.0))
+        """Convert flow rate to voltage (0-5V scale) based on MFC capacity"""
+        if self.max_flow <= 0:
+            return 0.0
+
+        # Calculate voltage proportionally to max flow
+        voltage = (flow_rate / self.max_flow) * 5.0
+
+        # Clamp between 0-5V to prevent out-of-range errors
+        return max(0.0, min(5.0, voltage))
 
     def voltage_to_flow(self, voltage):
-        """Convert voltage to flow rate"""
-        return voltage / 5.0 * self.max_flow
+        """Convert voltage to flow rate based on MFC capacity"""
+        if self.max_flow <= 0:
+            return 0.0
+        return (voltage / 5.0) * self.max_flow
 
 
 class MFCManager:

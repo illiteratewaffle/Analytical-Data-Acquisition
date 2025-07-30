@@ -16,39 +16,50 @@ class MFCControlFrame(tk.LabelFrame):
         # Channel info labels
         self.channel_info = tk.StringVar()
         ttk.Label(self, textvariable=self.channel_info, font=("Arial", 8)).grid(
-            row=0, column=0, columnspan=3, sticky="w", padx=5
+            row=0, column=0, columnspan=4, sticky="w", padx=5
         )
 
         # MFC selection
-        ttk.Label(self, text="MFC Type:").grid(row=1, column=0, padx=5, pady=5)
+        ttk.Label(self, text="MFC Type:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
         self.mfc_var = tk.StringVar()
-        self.mfc_dropdown = ttk.Combobox(self, textvariable=self.mfc_var, state="readonly")
+        self.mfc_dropdown = ttk.Combobox(self, textvariable=self.mfc_var, state="readonly", width=12)
         self.mfc_dropdown['values'] = self.mfc_manager.get_all_mfc_names()
-        self.mfc_dropdown.grid(row=1, column=1, padx=5, pady=5)
+        self.mfc_dropdown.grid(row=1, column=1, padx=5, pady=5, columnspan=3, sticky="w")
 
-        # Flow rate control
-        ttk.Label(self, text="Set Flow:").grid(row=2, column=0, padx=5, pady=5)
+        # Set flow section
+        ttk.Label(self, text="Set Flow:").grid(row=2, column=0, padx=5, pady=5, sticky="e")
         self.flow_var = tk.StringVar()
-        self.flow_entry = ttk.Entry(self, textvariable=self.flow_var)
-        self.flow_entry.grid(row=2, column=1, padx=5, pady=5)
+        self.flow_entry = ttk.Entry(self, textvariable=self.flow_var, width=8)
+        self.flow_entry.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+
+        # Set flow unit display
+        self.set_unit_var = tk.StringVar(value="SCCM")
+        ttk.Label(self, textvariable=self.set_unit_var, width=6).grid(row=2, column=2, padx=5, pady=5, sticky="w")
 
         # Set button
-        self.set_btn = ttk.Button(self, text="Set", command=self.set_flow)
-        self.set_btn.grid(row=2, column=2, padx=5, pady=5)
+        self.set_btn = ttk.Button(self, text="Set", command=self.set_flow, width=6)
+        self.set_btn.grid(row=2, column=3, padx=5, pady=5, sticky="w")
 
-        # Actual flow display
-        ttk.Label(self, text="Actual Flow:").grid(row=3, column=0, padx=5, pady=5)
+        # Actual flow section
+        ttk.Label(self, text="Actual Flow:").grid(row=3, column=0, padx=5, pady=5, sticky="e")
         self.actual_flow_var = tk.StringVar(value="0.0")
-        ttk.Label(self, textvariable=self.actual_flow_var).grid(row=3, column=1, padx=5, pady=5)
+        ttk.Label(self, textvariable=self.actual_flow_var, width=8).grid(row=3, column=1, padx=5, pady=5, sticky="w")
 
-        # Unit display
-        self.unit_var = tk.StringVar(value="SCCM")
-        ttk.Label(self, textvariable=self.unit_var).grid(row=3, column=2, padx=5, pady=5)
+        # Actual flow unit display
+        self.actual_unit_var = tk.StringVar(value="SCCM")
+        ttk.Label(self, textvariable=self.actual_unit_var).grid(row=3, column=2, padx=5, pady=5, sticky="w")
+
+        # Scaling information
+        self.scaling_info = tk.StringVar()
+        ttk.Label(self, textvariable=self.scaling_info, font=("Arial", 8)).grid(
+            row=4, column=0, columnspan=4, sticky="w", padx=5
+        )
 
         # Initialize
         if self.mfc_dropdown['values']:
             self.mfc_var.set(self.mfc_dropdown['values'][0])
             self.update_unit_display()
+            self.update_scaling_info()
 
         # Bind MFC selection change
         self.mfc_var.trace_add("write", self.on_mfc_change)
@@ -58,14 +69,21 @@ class MFCControlFrame(tk.LabelFrame):
 
     def on_mfc_change(self, *args):
         self.update_unit_display()
+        self.update_scaling_info()
+
+    def update_scaling_info(self):
+        """Update scaling information display"""
+        mfc = self.get_current_mfc()
+        if mfc:
+            self.scaling_info.set(f"5V = {mfc.max_flow} {mfc.unit}, 0V = 0 {mfc.unit}")
 
     def update_unit_display(self):
-        """Update unit display based on MFC selection"""
-        mfc_name = self.mfc_var.get()
-        if "SLPM" in mfc_name:
-            self.unit_var.set("SLPM")
-        else:
-            self.unit_var.set("SCCM")
+        """Update unit displays based on MFC selection"""
+        mfc = self.get_current_mfc()
+        if mfc:
+            unit = mfc.unit
+            self.set_unit_var.set(unit)
+            self.actual_unit_var.set(unit)
 
     def update_channel_info(self):
         """Update channel information display"""
@@ -79,29 +97,39 @@ class MFCControlFrame(tk.LabelFrame):
     def set_flow(self):
         try:
             mfc = self.get_current_mfc()
+            if not mfc:
+                messagebox.showerror("Selection Error", "No MFC selected")
+                return
+
             flow = float(self.flow_var.get())
             voltage = mfc.flow_to_voltage(flow)
             ao_channel = self.channel_config[self.index]['ao']
             self.daq.write_voltage(ao_channel, voltage)
         except (ValueError, AttributeError) as e:
             messagebox.showerror("Input Error", f"Invalid flow value: {e}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to set flow: {str(e)}")
 
     def update_reading(self):
         try:
             mfc = self.get_current_mfc()
+            if not mfc:
+                return
+
             ai_channel = self.channel_config[self.index]['ai']
             voltage = self.daq.read_voltage(ai_channel)
             flow = mfc.voltage_to_flow(voltage)
             self.actual_flow_var.set(f"{flow:.2f}")
         except Exception as e:
-            print(f"Read error: {e}")
+            # Fail silently for read errors to avoid spamming
+            pass
 
 
 class MainApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("MFC Control System")
-        self.geometry("650x450")
+        self.geometry("750x550")
 
         # Initialize managers
         self.mfc_manager = MFCManager()
@@ -126,7 +154,7 @@ class MainApp(tk.Tk):
         for i in range(4):
             frame = MFCControlFrame(
                 self, i, self.daq, self.mfc_manager, self.channel_config,
-                text=f"MFC Controller {i + 1}"
+                text=f"MFC Controller {i + 1}", padx=10, pady=10
             )
             frame.grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
             self.control_frames.append(frame)
