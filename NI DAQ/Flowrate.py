@@ -1,32 +1,26 @@
-import nidaqmx
+class MFC:
+    def __init__(self, name, max_flow):
+        self.name = name
+        self.max_flow = max_flow
 
-# Define your input channels
-analog_inputs = ["Dev1/ai0", "Dev1/ai1"]
+    def flow_to_voltage(self, flow_rate):
+        """Convert flow rate to voltage (0-5V scale)"""
+        return min(5.0, max(0.0, flow_rate / self.max_flow * 5.0))
 
-# Create a task to read voltage
-with nidaqmx.Task() as ai_task:
-    for ch in analog_inputs:
-        ai_task.ai_channels.add_ai_voltage_chan(ch, min_val=-10.0, max_val=10.0)
-
-    # Read one sample per channel
-    voltages = ai_task.read()
-    print(f"Read voltages from {analog_inputs}: {voltages}")
+    def voltage_to_flow(self, voltage):
+        """Convert voltage to flow rate"""
+        return voltage / 5.0 * self.max_flow
 
 
-# Create the analog output task
-ao_task = nidaqmx.Task()
+class MFCManager:
+    def __init__(self):
+        self.mfcs = {}
 
-# Add AO channels
-ao_task.ao_channels.add_ao_voltage_chan("Dev1/ao0", min_val=0.0, max_val=5.0)
-ao_task.ao_channels.add_ao_voltage_chan("Dev1/ao1", min_val=0.0, max_val=5.0)
+    def add_mfc(self, name, max_flow):
+        self.mfcs[name] = MFC(name, max_flow)
 
-# Set output voltages
-voltages = [2.5, 1.0]  # volts for ao0 and ao1
-ao_task.write(voltages, auto_start=True)
+    def get_mfc(self, name):
+        return self.mfcs.get(name)
 
-print(f"Set Dev1/ao0 to {voltages[0]} V and Dev1/ao1 to {voltages[1]} V")
-
-# Clean up
-ao_task.stop()
-ao_task.close()
-
+    def get_all_mfc_names(self):
+        return list(self.mfcs.keys())
