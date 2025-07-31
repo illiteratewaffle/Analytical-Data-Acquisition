@@ -5,8 +5,12 @@ from typing import Dict, Any, List, Tuple
 
 @dataclass
 class Settings:
+    # Board configuration
+    ai_board_number: int =0 # Analog input board number
+    dio_board_number: int =0 # Digital I/O board number (for valves)
+    ai_channel: int =0 # Analog input channel
+
     # Acquisition parameters
-    channel: int = 0  # DAQ analog channel wired to detector
     sampling_frequency: int = 10_000  # Hz, e.g. 10_000 for 10 kHz
     block_size: int = 1_000  # samples grabbed per driver call
     run_duration: float = 595.0  # seconds, total length of a run (595 for 10 min interval)
@@ -32,8 +36,12 @@ class Settings:
     # Helpers
     def validate(self) -> None:
         """Raise ValueError if any field is outside a sane range."""
-        if not (0 <= self.channel <= 15):
-            raise ValueError("channel must be between 0 and 15 (inclusive)")
+        if not (0 <= self.ai_board_number <= 15):
+            raise ValueError("AI board number must be between 0 and 15 (inclusive)")
+        if not (0 <= self.dio_board_number <= 15):
+            raise ValueError("DIO board number must be between 0 and 15 (inclusive)")
+        if not (0 <= self.ai_channel <= 15):
+            raise ValueError("AI channel must be between 0 and 15 (inclusive)")
         if self.sampling_frequency <= 0:
             raise ValueError("sampling_frequency must be positive")
         if self.block_size <= 0:
@@ -52,7 +60,9 @@ class Settings:
     def as_dict(self) -> Dict[str, Any]:
         """Return a plain dict of the current settings."""
         return {
-            "channel": self.channel,
+            "ai_board_number": self.ai_board_number,
+            "dio_board_number": self.dio_board_number,
+            "ai_channel": self.ai_channel,
             "sampling_frequency": self.sampling_frequency,
             "block_size": self.block_size,
             "run_duration": self.run_duration,

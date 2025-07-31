@@ -1,3 +1,4 @@
+# DataAcquisition.py
 import numpy as np
 from mcculw import ul
 from mcculw.enums import ULRange
@@ -14,10 +15,19 @@ class DataAcquisition:
     samplingFrequency = 10_000  # Hz
 
     def __init__(self):
-        # Board-specific settings (unchanged)
-        self.board_num = 0
-        self.channel = 0
+        # Board-specific settings (updated to use settings)
+        self.board_num = settings.ai_board_number
+        self.channel = settings.ai_channel
         self.ai_range = ULRange.BIP20VOLTS
+        self._hardware_available = False
+
+        try:
+            # Try to access the board to verify it exists
+            ul.get_board_name(self.board_num)
+            self._hardware_available = True
+        except ULError:
+            print(f"Warning: Analog input board {self.board_num} not found. Running in simulation mode.")
+            self._hardware_available = False
 
         # Pre-allocate one-block buffer
         self._buf = (ct.c_uint16 * self.blockSize)()
@@ -79,6 +89,10 @@ class DataAcquisition:
 
     # Low-level helpers (original logic kept intact)
     def getSignalData(self) -> float | None:
+        if not self._hardware_available:
+            # Simulate a sine wave when hardware isn't available
+            return 2.5 + 2.5 * np.sin(time.perf_counter() * 2 * np.pi * 0.1)
+
         try:
             ul.a_in_scan(self.board_num,
                          self.channel, self.channel,

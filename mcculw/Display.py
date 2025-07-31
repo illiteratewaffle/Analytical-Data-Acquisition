@@ -29,6 +29,18 @@ class Display:
         self.root = root
         self.root.title("Real-Time Signal Monitor")
 
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Create control tab
+        self.control_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.control_tab, text="Control")
+
+        # Create config tab
+        self.config_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.config_tab, text="Configuration")
+
         self.daq = DataAcquisition()
         self.dataQueue = queue.Queue()
         self.daq.attach_queue(self.dataQueue)
@@ -48,6 +60,16 @@ class Display:
         self.auto_run_job = None
         self.next_run_time = None
 
+        # Initialize valves after settings
+        self.valves = Valves()
+        if not hasattr(self.daq, '_hardware_available') or not self.daq._hardware_available:
+            messagebox.showwarning("Hardware Not Found",
+                                   f"Analog input board {settings.ai_board_number} not found. Running in simulation mode.")
+
+        if not hasattr(self.valves, '_hardware_available') or not self.valves._hardware_available:
+            messagebox.showwarning("Hardware Not Found",
+                                   f"Digital I/O board {settings.dio_board_number} not found. Valve controls will be simulated.")
+
         # Build GUI
         self._build_widgets()
 
@@ -62,8 +84,59 @@ class Display:
     #  GUI layout
     # ──────────────────────────────────────────────────────────
     def _build_widgets(self):
+        # Build configuration tab first
+        self._build_config_tab()
+
+        # Build control tab
+        self._build_control_tab()
+
+    def _build_config_tab(self):
+        """Build the configuration tab"""
+        config_frm = ttk.LabelFrame(self.config_tab, text="Board Configuration", padding=10)
+        config_frm.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # AI Board
+        ai_frm = ttk.Frame(config_frm)
+        ai_frm.pack(fill=tk.X, pady=5)
+        ttk.Label(ai_frm, text="AI Board Number:").pack(side=tk.LEFT, padx=(0, 10))
+        self.ai_board_var = tk.IntVar(value=settings.ai_board_number)
+        ai_board_spin = ttk.Spinbox(ai_frm, from_=0, to=15, width=5,
+                                    textvariable=self.ai_board_var)
+        ai_board_spin.pack(side=tk.LEFT)
+
+        # DIO Board
+        dio_frm = ttk.Frame(config_frm)
+        dio_frm.pack(fill=tk.X, pady=5)
+        ttk.Label(dio_frm, text="DIO Board Number:").pack(side=tk.LEFT, padx=(0, 10))
+        self.dio_board_var = tk.IntVar(value=settings.dio_board_number)
+        dio_board_spin = ttk.Spinbox(dio_frm, from_=0, to=15, width=5,
+                                     textvariable=self.dio_board_var)
+        dio_board_spin.pack(side=tk.LEFT)
+
+        # AI Channel
+        chan_frm = ttk.Frame(config_frm)
+        chan_frm.pack(fill=tk.X, pady=5)
+        ttk.Label(chan_frm, text="AI Channel:").pack(side=tk.LEFT, padx=(0, 10))
+        self.ai_channel_var = tk.IntVar(value=settings.ai_channel)
+        ai_channel_spin = ttk.Spinbox(chan_frm, from_=0, to=15, width=5,
+                                      textvariable=self.ai_channel_var)
+        ai_channel_spin.pack(side=tk.LEFT)
+
+        # Apply Button
+        btn_frm = ttk.Frame(config_frm)
+        btn_frm.pack(fill=tk.X, pady=(20, 5))
+        apply_btn = ttk.Button(btn_frm, text="Apply Configuration",
+                               command=self._apply_config)
+        apply_btn.pack(pady=10)
+
+        # Status message
+        self.config_status = tk.StringVar(value="")
+        ttk.Label(config_frm, textvariable=self.config_status, foreground="blue").pack()
+
+    def _build_control_tab(self):
+        """Build the main control tab"""
         # Top bar
-        top = ttk.Frame(self.root, padding=(10, 5))
+        top = ttk.Frame(self.control_tab, padding=(10, 5))
         top.pack(fill=tk.X)
 
         ttk.Label(top, text="Operator Initials:").grid(row=0, column=0, sticky="w")
@@ -85,10 +158,10 @@ class Display:
         self.filenameLabel = ttk.Label(top, textvariable=self.filenameVar, foreground="blue")
         self.filenameLabel.grid(row=0, column=5, sticky="w")
 
-        ttk.Separator(self.root, orient="horizontal").pack(fill=tk.X, pady=4)
+        ttk.Separator(self.control_tab, orient="horizontal").pack(fill=tk.X, pady=4)
 
         # Main frame
-        main = ttk.Frame(self.root)
+        main = ttk.Frame(self.control_tab)
         main.pack(fill=tk.X, padx=10)
 
         info = ttk.Frame(main)
@@ -222,8 +295,6 @@ class Display:
         valve_f = ttk.Frame(main, padding=(20, 0))
         valve_f.pack(side=tk.RIGHT, anchor="ne")
 
-        self.valves = Valves()
-
         self.buttonA = tk.Button(valve_f, text="Open A", width=10, bg=self.CLOSED_CLR, command=self.toggleValveA)
         self.buttonA.pack(pady=(0, 5))
 
@@ -237,10 +308,46 @@ class Display:
 
         self.line, = self.ax.plot([], [], lw=1.3)
 
-        FigureCanvasTkAgg(self.fig, master=self.root).get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        FigureCanvasTkAgg(self.fig, master=self.control_tab).get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
         self.xData = []
         self.yData = []
+
+    # ──────────────────────────────────────────────────────────
+    #  Configuration methods
+    # ──────────────────────────────────────────────────────────
+    def _apply_config(self):
+        """Apply new configuration settings"""
+        try:
+            if self.recording:
+                messagebox.showerror("Error", "Cannot change configuration while recording")
+                return
+
+            # Validate inputs
+            ai_board = int(self.ai_board_var.get())
+            dio_board = int(self.dio_board_var.get())
+            ai_channel = int(self.ai_channel_var.get())
+
+            if not (0 <= ai_board <= 15):
+                raise ValueError("AI board number must be 0-15")
+            if not (0 <= dio_board <= 15):
+                raise ValueError("DIO board number must be 0-15")
+            if not (0 <= ai_channel <= 15):
+                raise ValueError("AI channel must be 0-15")
+
+            # Update settings
+            settings.ai_board_number = ai_board
+            settings.dio_board_number = dio_board
+            settings.ai_channel = ai_channel
+
+            # Reinitialize hardware
+            self.valves = Valves()
+            self.daq = DataAcquisition()
+            self.daq.attach_queue(self.dataQueue)
+
+            self.config_status.set("Configuration updated successfully")
+        except ValueError as e:
+            messagebox.showerror("Error", f"Invalid configuration: {str(e)}")
 
     # ──────────────────────────────────────────────────────────
     #  Valve schedule management
