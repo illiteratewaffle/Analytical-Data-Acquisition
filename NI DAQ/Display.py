@@ -143,7 +143,7 @@ class MainApp(tk.Tk):
             {'ao': 'ao3', 'ai': 'ai3'}
         ]
 
-        # Add available MFCs
+        # Add available MFCs with output range 5.0V
         self.populate_mfcs()
 
         # Create menu
@@ -188,19 +188,19 @@ class MainApp(tk.Tk):
             frame.update_channel_info()
 
     def populate_mfcs(self):
-        # Add all MFC types
+        # Add all MFC types with output range 5.0V
         mfc_specs = [
-            ("30 SLPM", 30),
-            ("15 SLPM", 15),
-            ("5 SLPM", 5),
-            ("1 SLPM", 1),
-            ("500 SCCM", 500),
-            ("100 SCCM", 100),
-            ("20 SCCM", 20),
-            ("10 SCCM", 10)
+            ("30 SLPM", 30, 5.0),
+            ("15 SLPM", 15, 5.0),
+            ("5 SLPM", 5, 5.0),
+            ("1 SLPM", 1, 5.0),
+            ("500 SCCM", 500, 5.0),
+            ("100 SCCM", 100, 5.0),
+            ("20 SCCM", 20, 5.0),
+            ("10 SCCM", 10, 5.0)
         ]
-        for name, max_flow in mfc_specs:
-            self.mfc_manager.add_mfc(name, max_flow)
+        for name, max_flow, output_range in mfc_specs:
+            self.mfc_manager.add_mfc(name, max_flow, output_range)
 
     def update_readings(self):
         for frame in self.control_frames:
