@@ -87,7 +87,7 @@ class DataAcquisition:
             # a_in_scan blocks ≈ blockSize/samplingFrequency
             # so no extra sleep is needed
 
-    # Low-level helpers (original logic kept intact)
+    # Low-level helpers
     def getSignalData(self) -> float | None:
         if not self._hardware_available:
             # Simulate a sine wave when hardware isn't available
@@ -113,10 +113,11 @@ class DataAcquisition:
 
     # File I/O
     def writeData(self, data: list[tuple[float, float]]) -> None:
-        if not data or not self.filename:  # MODIFIED: Check filename
+        if not data or not self.filename:
             return
 
         with open(self.filename, "w", encoding="utf-8") as f:
             for epoch, v in data:
+                #format: "[time since Jan 1st 1904] TAB [Signal up to 4 decimal places]"
                 f.write(f"{epoch:.4f}\t{v:.4f}\n")
         print(f"Saved {len(data)} rows to {self.filename}")
