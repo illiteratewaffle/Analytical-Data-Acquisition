@@ -4,7 +4,6 @@ from time import sleep
 
 from Settings import settings
 
-
 class Valves:
     def __init__(self):
         self.board_num = settings.dio_board_number
@@ -13,81 +12,42 @@ class Valves:
         try:
             # Try to access the board to verify it exists
             ul.get_board_name(self.board_num)
-            # Configure all digital I/O bits as outputs
-            ul.d_config_port(self.board_num, DigitalPortType.AUXPORT, 1)
+            ul.d_config_port(self.board_num, DigitalPortType.FIRSTPORTA, 1)
             self._hardware_available = True
         except Exception as e:
             print(f"Warning: Digital I/O board {self.board_num} not found. Valve controls will be simulated.")
             self._hardware_available = False
 
-    def _set_valve(self, a_state: int, b_state: int):
-        """Set both valve control lines to specified states"""
-        if not self._hardware_available:
-            return
-
-        try:
-            # Set Position A control (DIO3)
-            ul.d_bit_out(self.board_num, DigitalPortType.AUXPORT, 3, a_state)
-            # Set Position B control (DIO1)
-            ul.d_bit_out(self.board_num, DigitalPortType.AUXPORT, 1, b_state)
-        except Exception as e:
-            print(f"Error setting valve states: {str(e)}")
-
-    def set_valve_position_b(self) -> None:
+    # Function to switch to Position A (open Valve A, close Valve B)
+    def set_valve_position_a(self) -> None:
         if not self._hardware_available:
             print("Simulating valve A open")
             return
 
         try:
-            # Set A high, B low
-            self._set_valve(a_state=1, b_state=0)
-            print("Valve set to Position A")
+            ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, 0, 0)  # Valve A ON
+            ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, 1, 1)  # Valve B OFF
         except Exception as e:
             print(f"Error setting valve A: {str(e)}")
 
-    def set_valve_position_a(self) -> None:
+    # Function to switch to Position B (open Valve B, close Valve A)
+    def set_valve_position_b(self) -> None:
         if not self._hardware_available:
             print("Simulating valve B open")
             return
 
         try:
-            # Set B high, A low
-            self._set_valve(a_state=0, b_state=1)
-            print("Valve set to Position B")
+            ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, 0, 1)  # Valve A OFF
+            ul.d_bit_out(self.board_num, DigitalPortType.FIRSTPORTA, 1, 0)  # Valve B ON
         except Exception as e:
             print(f"Error setting valve B: {str(e)}")
-
-    def read_valve_feedback(self) -> str:
-        if not self._hardware_available:
-            return "Simulated feedback (hardware unavailable)"
-
-        try:
-            # Read position feedback (DIO5 for B, DIO6 for A)
-            pos_a = ul.d_bit_in(self.board_num, DigitalPortType.AUXPORT, 6)
-            pos_b = ul.d_bit_in(self.board_num, DigitalPortType.AUXPORT, 5)
-
-            if pos_a:
-                return "Valve is at Position A"
-            elif pos_b:
-                return "Valve is at Position B"
-            else:
-                return "Valve position unknown (both feedbacks low)"
-        except Exception as e:
-            return f"Error reading valve feedback: {str(e)}"
 
 
 def testValves():
     testValve = Valves()
-    print("Switching to Position A...")
     testValve.set_valve_position_a()
-    sleep(1)
-    print(testValve.read_valve_feedback())
-
-    print("Switching to Position B...")
+    sleep(3)
     testValve.set_valve_position_b()
-    sleep(1)
-    print(testValve.read_valve_feedback())
 
-
-# Uncomment the line below to run the test
-#testValves()
+# Enable this to test valves
+# testValves()
