@@ -3,11 +3,12 @@ from tkinter import ttk
 
 
 class ConfigWindow(tk.Toplevel):
-    def __init__(self, parent, daq, channel_config):
+    def __init__(self, parent, daq, channel_config, valve_config):
         super().__init__(parent)
         self.title("DAQ Configuration")
         self.daq = daq
         self.channel_config = channel_config
+        self.valve_config = valve_config
         self.parent = parent
 
         # Create notebook for tabs
@@ -47,12 +48,16 @@ class ConfigWindow(tk.Toplevel):
         self.digital_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.digital_tab, text="Digital Channels")
 
-        ttk.Label(self.digital_tab, text="Digital channels are pre-configured", font=("Arial", 10)).pack(pady=20)
-        ttk.Label(self.digital_tab, text="Valve 1: port1/line0").pack(pady=5)
-        ttk.Label(self.digital_tab, text="Valve 2: port1/line1").pack(pady=5)
-        ttk.Label(self.digital_tab, text="Valve 3: port1/line2").pack(pady=5)
-        ttk.Label(self.digital_tab, text="Valve 4: port1/line3").pack(pady=5)
-        ttk.Label(self.digital_tab, text="To change these, modify ValveControlFrame.py").pack(pady=20)
+        # Valve configuration table
+        ttk.Label(self.digital_tab, text="Valve").grid(row=0, column=0, padx=5, pady=5)
+        ttk.Label(self.digital_tab, text="Port/Line").grid(row=0, column=1, padx=5, pady=5)
+
+        self.valve_vars = []
+        for i, valve in enumerate(self.valve_config):
+            ttk.Label(self.digital_tab, text=valve['name']).grid(row=i + 1, column=0, padx=5, pady=5)
+            port_var = tk.StringVar(value=valve['port_line'])
+            ttk.Entry(self.digital_tab, textvariable=port_var).grid(row=i + 1, column=1, padx=5, pady=5)
+            self.valve_vars.append(port_var)
 
         # Save button
         ttk.Button(self, text="Save Configuration", command=self.save_config).pack(pady=10)
@@ -65,5 +70,10 @@ class ConfigWindow(tk.Toplevel):
             self.channel_config[i]['ao'] = self.ao_vars[i].get()
             self.channel_config[i]['ai'] = self.ai_vars[i].get()
 
+        # Save valve config
+        for i in range(len(self.valve_config)):
+            self.valve_config[i]['port_line'] = self.valve_vars[i].get()
+
         self.parent.update_channel_labels()
+        self.parent.update_valve_config()
         self.destroy()

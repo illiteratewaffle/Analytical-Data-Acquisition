@@ -1,8 +1,9 @@
 import nidaqmx
 
 class DAQController:
-    def __init__(self, device_name="Dev4"):
+    def __init__(self, device_name="Dev2"):
         self.device_name = device_name
+        self.digital_states = {}  # Track valve states
 
     def set_device_name(self, device_name):
         self.device_name = device_name
@@ -30,3 +31,9 @@ class DAQController:
         with nidaqmx.Task() as task:
             task.do_channels.add_do_chan(f"{self.device_name}/{port_line}")
             task.write(bool(state))
+        # Update state tracking
+        self.digital_states[port_line] = bool(state)
+
+    def read_digital_state(self, port_line):
+        """Read last set digital state"""
+        return self.digital_states.get(port_line, False)
