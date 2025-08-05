@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Tuple
-
+import os
 
 @dataclass
 class Settings:
@@ -17,6 +17,7 @@ class Settings:
 
     # Misc / operator info
     operator_initials: str = "NULL"  # appears in data‑file names
+    save_directory: str = field(default=os.getcwd())
 
     # Auto-run parameters
     auto_run: bool = False  # Enable auto-run feature

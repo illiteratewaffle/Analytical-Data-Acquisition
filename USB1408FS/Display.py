@@ -1,7 +1,8 @@
 import time
 import queue
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
+import os
 from datetime import datetime, timedelta
 import math
 
@@ -167,22 +168,46 @@ class Display:
         info = ttk.Frame(main)
         info.pack(side=tk.LEFT, expand=True)
 
+        # New: Save Directory selection
+        dir_frm = ttk.Frame(info)
+        dir_frm.grid(row=0, column=0, columnspan=6, sticky="we", pady=(0, 5))
+
+        ttk.Label(dir_frm, text="Save Directory:").pack(side=tk.LEFT, padx=(0, 5))
+        self.save_dir_var = tk.StringVar(value=settings.save_directory)
+        dir_entry = ttk.Entry(dir_frm, textvariable=self.save_dir_var, width=40)
+        dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(
+            dir_frm,
+            text="Browse",
+            width=8,
+            command=self._select_directory
+        ).pack(side=tk.LEFT, padx=(5, 0))
+
+        # New: File path display
+        self.file_path_var = tk.StringVar(value="")
+        ttk.Label(
+            info,
+            textvariable=self.file_path_var,
+            foreground="green",
+            wraplength=500
+        ).grid(row=1, column=0, columnspan=6, sticky="w", pady=(0, 5))
+
         # Live readouts
-        ttk.Label(info, text="Time Elapsed (s):").grid(row=0, column=0, sticky="w")
+        ttk.Label(info, text="Time Elapsed (s):").grid(row=2, column=0, sticky="w")
         self.timeVar = tk.StringVar(value="0.0000")
-        ttk.Label(info, textvariable=self.timeVar).grid(row=0, column=1, padx=(4, 20))
+        ttk.Label(info, textvariable=self.timeVar).grid(row=2, column=1, padx=(4, 20))
 
-        ttk.Label(info, text="Current Signal (V):").grid(row=0, column=2, sticky="w")
+        ttk.Label(info, text="Current Signal (V):").grid(row=2, column=2, sticky="w")
         self.signalVar = tk.StringVar(value="0.0000")
-        ttk.Label(info, textvariable=self.signalVar).grid(row=0, column=3, padx=(4, 20))
+        ttk.Label(info, textvariable=self.signalVar).grid(row=2, column=3, padx=(4, 20))
 
-        ttk.Label(info, text="Time Remaining (s):").grid(row=0, column=4, sticky="w")
+        ttk.Label(info, text="Time Remaining (s):").grid(row=2, column=4, sticky="w")
         self.remainingVar = tk.StringVar(value="0.0000")
-        ttk.Label(info, textvariable=self.remainingVar).grid(row=0, column=5)
+        ttk.Label(info, textvariable=self.remainingVar).grid(row=2, column=5)
 
         # Run-duration row
         dur = ttk.Frame(info)
-        dur.grid(row=1, column=0, columnspan=6, sticky="w", pady=(6, 0))
+        dur.grid(row=3, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         ttk.Label(dur, text="Run Duration (s):").pack(side=tk.LEFT, padx=(0, 2))
         self.durationVar = tk.StringVar(value=str(settings.run_duration))
@@ -207,7 +232,7 @@ class Display:
 
         # Valve schedule controls
         valve_schedule_frm = ttk.LabelFrame(info, text="Valve Schedule")
-        valve_schedule_frm.grid(row=2, column=0, columnspan=6, sticky="we", pady=(10, 5), padx=5)
+        valve_schedule_frm.grid(row=4, column=0, columnspan=6, sticky="we", pady=(10, 5), padx=5)
 
         # Initial valve
         initial_frm = ttk.Frame(valve_schedule_frm)
@@ -246,7 +271,7 @@ class Display:
 
         # Auto-run row
         auto_run_f = ttk.Frame(info)
-        auto_run_f.grid(row=3, column=0, columnspan=6, sticky="w", pady=(10, 0))
+        auto_run_f.grid(row=5, column=0, columnspan=6, sticky="w", pady=(10, 0))
 
         self.autoRunVar = tk.BooleanVar(value=settings.auto_run)
         ttk.Checkbutton(
@@ -271,7 +296,7 @@ class Display:
 
         # Y-axis controls
         yctrl = ttk.Frame(info)
-        yctrl.grid(row=4, column=0, columnspan=6, sticky="w", pady=(6, 0))
+        yctrl.grid(row=6, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         self.autoscaleVar = tk.BooleanVar(value=True)
         ttk.Checkbutton(
@@ -417,6 +442,19 @@ class Display:
         return sorted(schedule, key=lambda x: x[0])
 
     # ──────────────────────────────────────────────────────────
+    #  Directory selection
+    # ──────────────────────────────────────────────────────────
+    def _select_directory(self):
+        """Open directory dialog and update save path"""
+        dir_path = filedialog.askdirectory(
+            initialdir=self.save_dir_var.get(),
+            title="Select Save Directory"
+        )
+        if dir_path:
+            self.save_dir_var.set(dir_path)
+            settings.save_directory = dir_path
+
+    # ──────────────────────────────────────────────────────────
     #  Duration and interval synchronization
     # ──────────────────────────────────────────────────────────
     def _set_duration(self, seconds: float):
@@ -555,11 +593,28 @@ class Display:
         stamp = datetime.now().strftime("%y%m%d_%H%M%S")
         self.current_filename = f"{initials}_{stamp}"
 
+        # Generate directory path
+        base_dir = self.save_dir_var.get()
+        yyyy_mm = datetime.now().strftime("%Y-%m")
+        full_dir = os.path.join(base_dir, yyyy_mm)
+
+        # Create directory if needed
+        try:
+            os.makedirs(full_dir, exist_ok=True)
+        except Exception as e:
+            messagebox.showerror(
+                "Directory Error",
+                f"Could not create directory {full_dir}: {str(e)}"
+            )
+            return
+
+        # Set filename with full path
+        full_path = os.path.join(full_dir, self.current_filename + ".txt")
+        self.daq.set_filename(full_path)
+        self.file_path_var.set(f"File will be saved to:\n{full_path}")
+
         # Show filename in UI
         self.filenameVar.set(self.current_filename)
-
-        # Set filename in DAQ
-        self.daq.set_filename(self.current_filename)
 
         # Use effective duration (with 5s buffer)
         self.maxDuration = settings.effective_run_duration

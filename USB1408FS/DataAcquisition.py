@@ -1,4 +1,6 @@
 # DataAcquisition.py
+import os
+
 import numpy as np
 from mcculw import ul
 from mcculw.enums import ULRange
@@ -116,8 +118,23 @@ class DataAcquisition:
         if not data or not self.filename:
             return
 
-        with open(self.filename, "w", encoding="utf-8") as f:
-            for epoch, v in data:
-                #format: "[time since Jan 1st 1904] TAB [Signal up to 4 decimal places]"
-                f.write(f"{epoch:.4f}\t{v:.4f}\n")
-        print(f"Saved {len(data)} rows to {self.filename}")
+        try:
+            # Get directory path and ensure it exists
+            dir_path = os.path.dirname(self.filename)
+            if dir_path:  # Only try to create if there is a directory component
+                os.makedirs(dir_path, exist_ok=True)
+
+            # Write the data file
+            with open(self.filename, "w", encoding="utf-8") as f:
+                for epoch, v in data:
+                    # Format: "[time since Jan 1st 1904] TAB [Signal up to 4 decimal places]"
+                    f.write(f"{epoch:.4f}\t{v:.4f}\n")
+
+            print(f"Successfully saved {len(data)} rows to {self.filename}")
+
+        except PermissionError as e:
+            print(f"Error: Permission denied when writing to {self.filename}: {str(e)}")
+        except OSError as e:
+            print(f"Error writing to {self.filename}: {str(e)}")
+        except Exception as e:
+            print(f"Unexpected error saving data: {str(e)}")
