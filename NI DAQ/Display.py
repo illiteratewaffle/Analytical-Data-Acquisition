@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox, Menu
 from Flowrate import MFCManager
 from DAQController import DAQController
 from ConfigWindow import ConfigWindow
+from ValveControlFrame import ValveControlFrame
 
 
 class MFCControlFrame(tk.LabelFrame):
@@ -128,8 +129,8 @@ class MFCControlFrame(tk.LabelFrame):
 class MainApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("MFC Control System")
-        self.geometry("750x550")
+        self.title("MFC & Valve Control System")
+        self.geometry("800x600")  # Slightly larger to accommodate tabs
 
         # Initialize managers
         self.mfc_manager = MFCManager()
@@ -149,20 +150,39 @@ class MainApp(tk.Tk):
         # Create menu
         self.create_menu()
 
-        # Create control frames
+        # Create notebook (tabs)  -- NEW TAB SYSTEM
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
+
+        # Tab 1: MFC Control
+        self.mfc_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.mfc_tab, text="MFC Control")
+
+        # Create MFC control frames in the MFC tab
         self.control_frames = []
         for i in range(4):
             frame = MFCControlFrame(
-                self, i, self.daq, self.mfc_manager, self.channel_config,
+                self.mfc_tab, i, self.daq, self.mfc_manager, self.channel_config,
                 text=f"MFC Controller {i + 1}", padx=10, pady=10
             )
             frame.grid(row=i // 2, column=i % 2, padx=10, pady=10, sticky="nsew")
             self.control_frames.append(frame)
 
-        # Configure grid weights
+        # Configure grid weights for MFC tab
         for i in range(2):
-            self.rowconfigure(i, weight=1)
-            self.columnconfigure(i, weight=1)
+            self.mfc_tab.rowconfigure(i, weight=1)
+            self.mfc_tab.columnconfigure(i, weight=1)
+
+        # Tab 2: Valve Control  -- NEW VALVE TAB
+        self.valve_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.valve_tab, text="Valve Control")
+
+        # Create valve control frame
+        self.valve_frame = ValveControlFrame(
+            self.valve_tab, self.daq,
+            text="Valve Controls", padx=20, pady=20
+        )
+        self.valve_frame.pack(fill='both', expand=True, padx=20, pady=20)
 
         # Setup periodic updates
         self.update_interval = 1000  # ms

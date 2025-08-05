@@ -9,15 +9,13 @@ class DAQController:
 
     def write_voltage(self, channel, voltage):
         """Write voltage to analog output channel (clamped to 0-5V)"""
-        # Ensure voltage is within valid range
         clamped_voltage = max(0.0, min(5.0, voltage))
 
         with nidaqmx.Task() as task:
-            # ADD MIN_VAL AND MAX_VAL PARAMETERS HERE
             task.ao_channels.add_ao_voltage_chan(
                 f"{self.device_name}/{channel}",
-                min_val=0.0,  # Explicitly set minimum voltage
-                max_val=5.0   # Explicitly set maximum voltage
+                min_val=0.0,
+                max_val=5.0
             )
             task.write(clamped_voltage)
 
@@ -26,3 +24,9 @@ class DAQController:
         with nidaqmx.Task() as task:
             task.ai_channels.add_ai_voltage_chan(f"{self.device_name}/{channel}")
             return task.read()
+
+    def write_digital(self, port_line, state):
+        """Write digital output (on/off) to a specific port/line"""
+        with nidaqmx.Task() as task:
+            task.do_channels.add_do_chan(f"{self.device_name}/{port_line}")
+            task.write(bool(state))
