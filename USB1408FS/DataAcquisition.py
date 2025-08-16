@@ -113,7 +113,7 @@ class DataAcquisition:
     def recordData(self, epoch1904: float, volts: float) -> None:
         self.data.append((epoch1904, volts))
 
-    # File I/O
+    # File I/O. Writes data to file, saves file to computer
     def writeData(self, data: list[tuple[float, float]]) -> None:
         if not data or not self.filename:
             return
