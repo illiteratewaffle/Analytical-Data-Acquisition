@@ -23,12 +23,12 @@ class MFC:
         # Scale based on MFC output range
         raw_value = (voltage / self.output_range) * self.max_flow
 
+        # voltage to flow rate not reading correct values? lets calibrate it.
         calibration_constant = (-0.2681 * self.max_flow) - 0.1454
 
         calibrated_value = raw_value - calibration_constant
 
         return calibrated_value
-
 
 class MFCManager:
     def __init__(self):
