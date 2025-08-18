@@ -19,11 +19,15 @@ Hardware: MCC DAQ board connected and configured with InstaCal; NI DAQ board con
 
 Figure 1. List of available Python installers. 32 bit version highlighted in yellow, 64 bit version highlighted in green.
 
-## 2. InstaCal
+## 2. InstaCal and NI MAX
 
 2.1. Go to https://digilent.com/reference/software/instacal/start and download InstaCal
 
 2.2. After installing InstaCal, connect your DAQ board to your computer and ensure it shows up in InstaCal.
+
+2.3. Go to https://www.ni.com/en/support/downloads/drivers/download.ni-daq-mx.html#569353 and download NI MAX
+
+2.4. Connect your NI DAQ board to the computer and ensure it shows up in NI Device Monitor.
 
 ## 3. Install Packages
 
